@@ -1014,3 +1014,8 @@ function buildBudgetNotice(state: BudgetState, reason: "tokens" | "messages" | "
 
 
 
+
+function buildBudgetWarning(state: BudgetState) {
+  const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
+  return `Aviso: has superado $${DAILY_COST_WARNING.toFixed(2)} de coste estimado hoy. ${costLine}.`;
+}
