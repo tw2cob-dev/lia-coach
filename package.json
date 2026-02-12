@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/coach.test.cjs"
+    "test": "node --test tests/coach.test.cjs",
+    "clip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/paste-clipboard-image.ps1 -CopyTag",
+    "clip:agent:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-clipboard-agent.ps1",
+    "clip:agent:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-clipboard-agent.ps1",
+    "clip:agent:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-clipboard-agent-startup.ps1"
   },
   "dependencies": {
     "next": "16.1.6",
