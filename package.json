@@ -14,6 +14,8 @@
     "clip:agent:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-clipboard-agent-startup.ps1"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.52.0",
+    "bcryptjs": "^2.4.3",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"

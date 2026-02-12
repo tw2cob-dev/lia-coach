@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ChatEvent,
   createAssistantTextEvent,
@@ -25,6 +26,8 @@ const DAILY_COST_WARNING = 0.5;
 const COST_INPUT_PER_1K = Number(process.env.NEXT_PUBLIC_LIA_COST_INPUT_PER_1K ?? "0.00015");
 const COST_OUTPUT_PER_1K = Number(process.env.NEXT_PUBLIC_LIA_COST_OUTPUT_PER_1K ?? "0.0006");
 const OUTPUT_TOKEN_RESERVE = 300;
+const AUTH_STORAGE_KEY = "lia-auth";
+
 const QUICK_PROMPTS = [
   { label: "Registrar comida", prompt: "Comida: tipo, cantidad aproximada y hora." },
   { label: "Entrenamiento", prompt: "Entrenamiento: tipo, duracion e intensidad." },
@@ -60,6 +63,12 @@ type PendingAttachment =
 type FileChatEvent = Extract<ChatEvent, { type: "file" }>;
 type FileChatEventWithFile = FileChatEvent & { file: NonNullable<FileChatEvent["file"]> };
 
+type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 function isSelectedFileEvent(
   event: ChatEvent,
   selectedIds: string[]
@@ -68,6 +77,7 @@ function isSelectedFileEvent(
 }
 
 export default function ChatPage() {
+  const router = useRouter();
   const [events, setEvents] = useState<ChatEvent[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -78,11 +88,29 @@ export default function ChatPage() {
   const [pendingNote, setPendingNote] = useState("");
   const [expandedSummaries, setExpandedSummaries] = useState<Record<string, boolean>>({});
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
-
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!stored) {
+      router.push("/login");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as AuthUser;
+      if (!parsed?.email) {
+        router.push("/login");
+        return;
+      }
+      setAuthUser(parsed);
+    } catch {
+      router.push("/login");
+    }
+  }, [router]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -532,6 +560,11 @@ export default function ChatPage() {
     });
   };
 
+  const handleLogout = () => {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    router.push("/login");
+  };
+
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;
   const selectedFiles = events.filter((event) => isSelectedFileEvent(event, selectedFileIds));
   const dateLabel = buildDateLabel();
@@ -554,10 +587,13 @@ export default function ChatPage() {
             </button>
             <button
               type="button"
+              onClick={handleLogout}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-white/70 shadow-sm"
               aria-label="Perfil"
             >
-              <span className="text-base">L</span>
+              <span className="text-sm font-semibold text-slate-700">
+                {authUser?.name?.charAt(0)?.toUpperCase() || "L"}
+              </span>
             </button>
           </div>
         </header>
@@ -1019,3 +1055,9 @@ function buildBudgetWarning(state: BudgetState) {
   const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
   return `Aviso: has superado $${DAILY_COST_WARNING.toFixed(2)} de coste estimado hoy. ${costLine}.`;
 }
+
+
+
+
+
+
