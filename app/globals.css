@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f5f6fb;
+  --foreground: #0c1018;
+  --muted: #6b7280;
+  --card: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(255, 255, 255, 0.7);
+  --accent: #3f6df6;
+  --accent-2: #7cc7ff;
 }
 
 @theme inline {
@@ -12,15 +17,45 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", Arial, sans-serif;
+  min-height: 100vh;
+}
+
+.app-bg {
+  background:
+    radial-gradient(120% 80% at 20% 0%, rgba(124, 199, 255, 0.35), transparent 60%),
+    radial-gradient(120% 80% at 80% 10%, rgba(126, 106, 255, 0.3), transparent 55%),
+    radial-gradient(90% 80% at 50% 100%, rgba(255, 255, 255, 0.95), transparent 60%),
+    #f5f6fb;
+}
+
+.glass-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.soft-pill {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.cta-gradient {
+  background: linear-gradient(130deg, var(--accent), var(--accent-2));
+}
+
+.subtle-border {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.font-display {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: -0.01em;
 }
