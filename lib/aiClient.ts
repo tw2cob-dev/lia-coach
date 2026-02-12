@@ -243,9 +243,13 @@ function logMetrics(args: {
 }
 
 function mockAIResponse(args: { todaySummary: string; weekSummary: string }): string {
-  return `Recibido. ${args.todaySummary} ${args.weekSummary}`.trim();
+  const hasSummary = Boolean(args.todaySummary || args.weekSummary);
+  if (!hasSummary) {
+    return "Hola, estoy aqui. Quieres registrar comida, entrenamiento o una nota rapida?";
+  }
+  return "Estoy aqui para ayudarte. Quieres registrar comida, entrenamiento, peso o una nota rapida?";
 }
-
 function safeFallback(): string {
   return "Gracias, lo tengo. ¿Quieres añadir algo más?";
 }
+
