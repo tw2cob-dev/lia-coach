@@ -1,19 +1,30 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { verifySessionToken } from "./lib/auth/sessionToken";
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const hasSession = Boolean(request.cookies.get("lia-auth")?.value);
+  const rawSession = request.cookies.get("lia-auth")?.value ?? "";
+  const sessionUser = rawSession ? await verifySessionToken(rawSession) : null;
+  const hasValidSession = Boolean(sessionUser);
 
   if (pathname === "/login") {
-    if (hasSession) {
+    if (hasValidSession) {
       return NextResponse.redirect(new URL("/chat", request.url));
     }
     return NextResponse.next();
   }
 
-  if (!hasSession) {
-    return NextResponse.redirect(new URL("/login", request.url));
+  if (!hasValidSession) {
+    const response = NextResponse.redirect(new URL("/login", request.url));
+    response.cookies.set("lia-auth", "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 0,
+    });
+    return response;
   }
 
   return NextResponse.next();

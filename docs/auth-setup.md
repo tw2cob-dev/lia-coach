@@ -27,9 +27,13 @@ Set these in local `.env.local` (or Windows user env vars) and in Vercel:
 - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
 - `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
 - `NEXT_PUBLIC_FIREBASE_APP_ID`
+- `AUTH_SESSION_SECRET` (minimum 32 characters)
 
 Also required by chat features:
 - `OPENAI_API_KEY`
+
+Optional alias (server-side Firebase token lookup):
+- `FIREBASE_WEB_API_KEY`
 
 Optional cost tuning:
 - `NEXT_PUBLIC_LIA_COST_INPUT_PER_1K`

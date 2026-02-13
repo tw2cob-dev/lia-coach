@@ -12,24 +12,7 @@ import {
 } from "firebase/auth";
 import { getFirebaseAuth } from "../../lib/firebase/client";
 
-const AUTH_STORAGE_KEY = "lia-auth";
-
 type Mode = "register" | "verify" | "login";
-
-type AuthUser = {
-  id: string;
-  name: string;
-  email: string;
-};
-
-function toAuthUser(user: User): AuthUser {
-  const fallbackName = user.email?.split("@")[0] ?? "Usuario";
-  return {
-    id: user.uid,
-    name: user.displayName?.trim() || fallbackName,
-    email: user.email ?? "",
-  };
-}
 
 function mapFirebaseError(raw: unknown): string {
   const genericMessage =
@@ -87,8 +70,15 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
 
   const establishSession = async (user: User) => {
-    await fetch("/api/auth/session", { method: "POST" });
-    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(toAuthUser(user)));
+    const idToken = await user.getIdToken(true);
+    const response = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+    if (!response.ok) {
+      throw new Error("No se pudo establecer la sesion segura.");
+    }
   };
 
   const handleRegister = async () => {

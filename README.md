@@ -76,7 +76,8 @@ npm run clip:agent:install
 
 How it works:
 - When clipboard contains an image, it saves it to `tmp/clipboard/`.
-- It also puts a text tag `<image path="...">` into clipboard (keeping bitmap data).
+- In VS Code focus, it puts a text tag `<image path="...">` into clipboard (keeping bitmap data).
+- Outside VS Code focus, clipboard is kept as normal image paste behavior.
 - In Codex CLI, use `Ctrl+V` directly.
 - Auto-delete is enabled by default: removes files older than 7 days and keeps only the latest 80 screenshots.
 

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { onAuthStateChanged, signOut as firebaseSignOut } from "firebase/auth";
 import {
   ChatEvent,
   createAssistantTextEvent,
@@ -12,8 +13,9 @@ import {
   createUserVoiceEvent,
 } from "../../lib/chatEvents";
 import { streamAssistantReplyForFile, streamAssistantReplyText } from "../../lib/chat/chatLogic";
+import { getFirebaseAuth } from "../../lib/firebase/client";
 
-const storageKey = "lia-chat-events";
+const CHAT_STORAGE_PREFIX = "lia-chat-events";
 const SCROLL_THRESHOLD_PX = 80;
 const MAX_TEXTAREA_HEIGHT_PX = 168;
 const MAX_FILE_TEXT_CHARS = 20000;
@@ -27,7 +29,6 @@ const DAILY_COST_WARNING = 0.5;
 const COST_INPUT_PER_1K = Number(process.env.NEXT_PUBLIC_LIA_COST_INPUT_PER_1K ?? "0.00015");
 const COST_OUTPUT_PER_1K = Number(process.env.NEXT_PUBLIC_LIA_COST_OUTPUT_PER_1K ?? "0.0006");
 const OUTPUT_TOKEN_RESERVE = 300;
-const AUTH_STORAGE_KEY = "lia-auth";
 
 const FILE_QUICK_ACTIONS = [
   "Resumen ejecutivo",
@@ -83,20 +84,68 @@ export default function ChatPage() {
   const [expandedSummaries, setExpandedSummaries] = useState<Record<string, boolean>>({});
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const activeUserId = authUser?.id ?? "anon";
+  const activeChatStorageKey = getChatStorageKey(activeUserId);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!stored) return;
-    try {
-      const parsed = JSON.parse(stored) as AuthUser;
-      if (!parsed?.email) return;
-      setAuthUser(parsed);
-    } catch {}
-  }, []);
+    const auth = getFirebaseAuth();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setAuthUser(null);
+        void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+          router.replace("/login");
+        });
+        return;
+      }
+
+      try {
+        await user.reload();
+      } catch {
+        setAuthUser(null);
+        void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+          router.replace("/login");
+        });
+        return;
+      }
+
+      if (!user.emailVerified) {
+        setAuthUser(null);
+        await firebaseSignOut(auth).catch(() => undefined);
+        void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+          router.replace("/login");
+        });
+        return;
+      }
+
+      try {
+        const idToken = await user.getIdToken(true);
+        const sessionResponse = await fetch("/api/auth/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        });
+        if (!sessionResponse.ok) throw new Error("Secure session failed.");
+
+        const meResponse = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!meResponse.ok) throw new Error("Cannot read server session.");
+        const data = (await meResponse.json()) as { user?: AuthUser };
+        if (!data.user?.id || !data.user.email) throw new Error("Invalid session user payload.");
+        setAuthUser(data.user);
+      } catch {
+        setAuthUser(null);
+        await firebaseSignOut(auth).catch(() => undefined);
+        void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+          router.replace("/login");
+        });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -109,8 +158,16 @@ export default function ChatPage() {
   }, [isStreaming]);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(storageKey);
-    if (!stored) return;
+    if (!authUser?.id) {
+      setEvents([]);
+      return;
+    }
+
+    const stored = window.localStorage.getItem(activeChatStorageKey);
+    if (!stored) {
+      setEvents([]);
+      return;
+    }
     try {
       const parsed = JSON.parse(stored);
       if (!Array.isArray(parsed)) return;
@@ -160,7 +217,7 @@ export default function ChatPage() {
     } catch {
       return;
     }
-  }, []);
+  }, [activeChatStorageKey, authUser?.id]);
 
   useEffect(() => {
     if (!autoScrollEnabled) return;
@@ -208,7 +265,7 @@ export default function ChatPage() {
   };
 
   const persistEvents = (next: ChatEvent[]) => {
-    window.localStorage.setItem(storageKey, JSON.stringify(next));
+    window.localStorage.setItem(activeChatStorageKey, JSON.stringify(next));
   };
 
   const clearPendingAttachment = () => {
@@ -232,7 +289,7 @@ export default function ChatPage() {
   };
 
   const reserveBudget = (inputText: string) => {
-    const state = loadBudgetState();
+    const state = loadBudgetState(activeUserId);
     const inputTokens = estimateTokens(inputText);
     const reservedOut = OUTPUT_TOKEN_RESERVE;
     const projectedTokensIn = state.tokensIn + inputTokens;
@@ -256,7 +313,7 @@ export default function ChatPage() {
 
     if (!state.warned && DAILY_COST_WARNING > 0 && projectedCost >= DAILY_COST_WARNING) {
       const nextWarn = { ...state, warned: true };
-      saveBudgetState(nextWarn);
+      saveBudgetState(activeUserId, nextWarn);
       notifyBudgetLimit(buildBudgetWarning(nextWarn));
     }
 
@@ -268,7 +325,7 @@ export default function ChatPage() {
       cost: projectedCost,
       warned: state.warned || (DAILY_COST_WARNING > 0 && projectedCost >= DAILY_COST_WARNING),
     };
-    saveBudgetState(nextState);
+    saveBudgetState(activeUserId, nextState);
 
     return { reservedOut };
   };
@@ -277,13 +334,13 @@ export default function ChatPage() {
     const actualOut = estimateTokens(responseText);
     const deltaOut = actualOut - reservedOut;
     if (deltaOut === 0) return;
-    const state = loadBudgetState();
+    const state = loadBudgetState(activeUserId);
     const nextState = {
       ...state,
       tokensOut: Math.max(0, state.tokensOut + deltaOut),
       cost: Math.max(0, state.cost + estimateCost(0, deltaOut)),
     };
-    saveBudgetState(nextState);
+    saveBudgetState(activeUserId, nextState);
   };
 
   const sendEvent = async (eventToSend: ChatEvent) => {
@@ -547,10 +604,14 @@ export default function ChatPage() {
   };
 
   const handleLogout = () => {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
-      router.push("/login");
-    });
+    const auth = getFirebaseAuth();
+    void firebaseSignOut(auth)
+      .catch(() => undefined)
+      .finally(() => {
+        void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+          router.push("/login");
+        });
+      });
   };
 
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;
@@ -1003,6 +1064,14 @@ type BudgetState = {
 
 const BUDGET_STORAGE_PREFIX = "lia-chat-budget";
 
+function getChatStorageKey(userId: string) {
+  return `${CHAT_STORAGE_PREFIX}-${userId}`;
+}
+
+function getBudgetStorageKey(userId: string, dateKey: string) {
+  return `${BUDGET_STORAGE_PREFIX}-${userId}-${dateKey}`;
+}
+
 function getLocalDateKey() {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -1011,9 +1080,9 @@ function getLocalDateKey() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function loadBudgetState(): BudgetState {
+function loadBudgetState(userId: string): BudgetState {
   const dateKey = getLocalDateKey();
-  const storageKey = `${BUDGET_STORAGE_PREFIX}-${dateKey}`;
+  const storageKey = getBudgetStorageKey(userId, dateKey);
   const raw = window.localStorage.getItem(storageKey);
   if (!raw) {
     return { date: dateKey, tokensIn: 0, tokensOut: 0, messages: 0, cost: 0, warned: false };
@@ -1036,8 +1105,8 @@ function loadBudgetState(): BudgetState {
   }
 }
 
-function saveBudgetState(state: BudgetState) {
-  const storageKey = `${BUDGET_STORAGE_PREFIX}-${state.date}`;
+function saveBudgetState(userId: string, state: BudgetState) {
+  const storageKey = getBudgetStorageKey(userId, state.date);
   window.localStorage.setItem(storageKey, JSON.stringify(state));
 }
 
