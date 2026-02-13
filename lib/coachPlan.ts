@@ -315,20 +315,17 @@ function mergeCoachPlan(current: CoachPlan, partial: Partial<CoachPlan>): CoachP
   const weeklyPlan = partial.weeklyPlan ?? current.weeklyPlan;
   const currentToday = current.signals?.today;
   const patchToday = partial.signals?.today;
-  const signals =
-    currentToday || patchToday
-      ? {
-          today:
-            currentToday || patchToday
-              ? {
-                  ...(currentToday ?? {}),
-                  ...(patchToday ?? {}),
-                  foods: mergeStringArrays(currentToday?.foods, patchToday?.foods),
-                  activities: mergeStringArrays(currentToday?.activities, patchToday?.activities),
-                }
-              : undefined,
-        }
-      : undefined;
+  const mergedTodayDateISO = patchToday?.dateISO ?? currentToday?.dateISO;
+  const mergedToday = mergedTodayDateISO
+    ? {
+        ...(currentToday ?? {}),
+        ...(patchToday ?? {}),
+        dateISO: mergedTodayDateISO,
+        foods: mergeStringArrays(currentToday?.foods, patchToday?.foods),
+        activities: mergeStringArrays(currentToday?.activities, patchToday?.activities),
+      }
+    : undefined;
+  const signals = mergedToday ? { today: mergedToday } : undefined;
   const metadata = {
     ...current.metadata,
     ...(partial.metadata ?? {}),
