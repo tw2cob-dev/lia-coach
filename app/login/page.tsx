@@ -54,8 +54,8 @@ function mapFirebaseError(raw: unknown): string {
   if (errorCode && process.env.NODE_ENV !== "production") {
     return `Error Firebase: ${errorCode}`;
   }
-  if (genericMessage && process.env.NODE_ENV !== "production") {
-    return `Error: ${genericMessage}`;
+  if (genericMessage) {
+    return genericMessage;
   }
   return "Error inesperado.";
 }
