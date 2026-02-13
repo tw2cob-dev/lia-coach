@@ -19,6 +19,7 @@ import { buildDashboardMetrics } from "../../lib/chat/dashboardMetrics";
 import { LIA_WELCOME_MESSAGE } from "../../lib/chat/welcomeMessage";
 import { CoachPlan, getCoachPlan, upsertCoachPlan } from "../../lib/coachPlan";
 import { getFirebaseAuth } from "../../lib/firebase/client";
+import { bindAppViewportHeightVar } from "../../lib/ui/mobileViewport";
 
 const CHAT_STORAGE_PREFIX = "lia-chat-events";
 const BUDGET_STORAGE_PREFIX = "lia-chat-budget";
@@ -176,6 +177,8 @@ export default function ChatPage() {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => bindAppViewportHeightVar(), []);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -835,8 +838,8 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="app-bg h-[100dvh] overflow-hidden text-slate-900">
-      <div className="mx-auto flex h-full max-w-[440px] flex-col overflow-hidden px-5 pb-4 pt-6">
+    <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
+      <div className="mx-auto flex h-full max-w-[440px] flex-col overflow-hidden px-5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+1rem)]">
         <header className="shrink-0 flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">LIA Coach</p>
@@ -1033,7 +1036,7 @@ export default function ChatPage() {
           <main
             ref={scrollRef}
             onScroll={handleScroll}
-            className="chat-scroll mt-2 min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            className="chat-scroll mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           >
             <ul className="message-list px-2 pb-4">
               <li className="message-row">

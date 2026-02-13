@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createUserWithEmailAndPassword,
@@ -11,6 +11,7 @@ import {
   type User,
 } from "firebase/auth";
 import { getFirebaseAuth } from "../../lib/firebase/client";
+import { bindAppViewportHeightVar } from "../../lib/ui/mobileViewport";
 
 type Mode = "register" | "verify" | "login";
 
@@ -69,6 +70,8 @@ export default function LoginPage() {
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const firebaseProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "";
+
+  useEffect(() => bindAppViewportHeightVar(), []);
 
   const establishSession = async (user: User) => {
     const idToken = await user.getIdToken(true);
@@ -193,8 +196,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="app-bg min-h-screen text-slate-900">
-      <div className="mx-auto flex min-h-screen max-w-[420px] flex-col justify-between px-6 pb-10 pt-10">
+    <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
+      <div className="mx-auto flex h-full max-w-[420px] flex-col justify-between overflow-hidden px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+1.25rem)]">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">LIA Coach</p>
           <h1 className="font-display mt-3 text-3xl font-semibold text-slate-900">
@@ -233,7 +236,7 @@ export default function LoginPage() {
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Nombre"
-                  className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
+                  className="auth-input w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
                 />
               )}
               <input
@@ -241,14 +244,14 @@ export default function LoginPage() {
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="Email"
                 type="email"
-                className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
+                className="auth-input w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
               />
               <input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Contraseña"
                 type="password"
-                className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
+                className="auth-input w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
               />
               {mode === "verify" && (
                 <div className="space-y-2">

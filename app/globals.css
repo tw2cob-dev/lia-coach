@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  --app-vh: 100dvh;
   --background: #eff2f8;
   --foreground: #121826;
   --muted: #6b7280;
@@ -22,6 +23,29 @@
   --panel-summary-bg: #ffe4e6;
   --panel-chat-bg: #dbeafe;
   --panel-composer-bg: #dcfce7;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --panel-summary-bg: transparent;
+  --panel-chat-bg: transparent;
+  --panel-composer-bg: transparent;
+  --assistant-bubble-bg: rgba(255, 255, 255, 0.72);
+  --welcome-bubble-bg: rgba(247, 250, 255, 0.9);
+  --welcome-bubble-border: rgba(148, 163, 184, 0.3);
+  --user-bubble-bg: rgba(30, 64, 175, 0.13);
+  --user-bubble-text: #0f172a;
+  --app-glow-1: rgba(142, 197, 255, 0.34);
+  --app-glow-2: rgba(137, 227, 255, 0.2);
+  --app-glow-3: rgba(255, 255, 255, 0.9);
+  --app-base: #edf3fa;
 }
 
 html[data-theme="dark"] {
@@ -63,8 +87,14 @@ body {
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     "Helvetica Neue", Arial, sans-serif;
-  min-height: 100vh;
+  min-height: 100%;
   -webkit-text-size-adjust: 100%;
+}
+
+.mobile-app-shell {
+  height: var(--app-vh);
+  min-height: var(--app-vh);
+  overflow: hidden;
 }
 
 @supports (-webkit-touch-callout: none) {
@@ -150,6 +180,8 @@ body {
   background: transparent;
   border: 1px solid transparent;
   box-shadow: none;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .assistant-bubble {
@@ -248,6 +280,114 @@ body {
   min-width: 78px;
   border: 1px solid transparent;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+html[data-theme="light"] .summary-card,
+html[data-theme="light"] .chat-card,
+html[data-theme="light"] .composer-shell,
+html[data-theme="light"] .chat-scroll {
+  background: transparent !important;
+}
+
+html[data-theme="light"] .summary-card,
+html[data-theme="light"] .chat-card {
+  backdrop-filter: none !important;
+}
+
+html[data-theme="light"] .app-bg {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(15, 23, 42, 0.014) 0px,
+      rgba(15, 23, 42, 0.014) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(15, 23, 42, 0.01) 0px,
+      rgba(15, 23, 42, 0.01) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    radial-gradient(120% 80% at 20% 0%, var(--app-glow-1), transparent 60%),
+    radial-gradient(120% 80% at 80% 10%, var(--app-glow-2), transparent 55%),
+    radial-gradient(90% 80% at 50% 100%, var(--app-glow-3), transparent 60%),
+    var(--app-base);
+}
+
+html[data-theme="light"] .summary-switch {
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+html[data-theme="light"] .summary-switch-btn {
+  color: #334155;
+}
+
+html[data-theme="light"] .summary-switch-btn.is-active {
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(236, 244, 255, 0.86)) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.15);
+}
+
+html[data-theme="light"] .summary-metric {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.62) !important;
+  backdrop-filter: blur(10px);
+}
+
+html[data-theme="light"] .assistant-bubble {
+  background: transparent;
+  border: 1px solid transparent;
+  backdrop-filter: none;
+}
+
+html[data-theme="light"] .welcome-bubble {
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+
+html[data-theme="light"] .user-bubble {
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+
+html[data-theme="light"] .message-list > .message-row + .message-row::before {
+  background: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0) 0%,
+    rgba(15, 23, 42, 0.08) 12%,
+    rgba(15, 23, 42, 0.12) 50%,
+    rgba(15, 23, 42, 0.08) 88%,
+    rgba(15, 23, 42, 0) 100%
+  );
+  opacity: 1;
+}
+
+html[data-theme="light"] .composer-chip {
+  border: 1px solid transparent;
+  background: transparent !important;
+}
+
+html[data-theme="light"] .composer-shell {
+  border-color: transparent !important;
+  backdrop-filter: none;
+}
+
+html[data-theme="light"] .composer-icon-btn {
+  border: 1px solid transparent;
+  background: transparent !important;
+}
+
+html[data-theme="light"] .composer-send-btn {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(130deg, #dbe8ff, #f2f8ff 74%, #d8fff2) !important;
+  text-shadow: none;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
 }
 
 html[data-theme="dark"] .app-bg .glass-card {
@@ -455,5 +595,25 @@ html[data-theme="dark"] .app-bg {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
     "Helvetica Neue", Arial, sans-serif;
   letter-spacing: -0.01em;
+}
+
+.auth-input {
+  color: #0f172a;
+}
+
+.auth-input::placeholder {
+  color: #6b7280;
+  opacity: 1;
+}
+
+html[data-theme="dark"] .app-bg .auth-input {
+  color: #e6edf8;
+  background-color: rgba(28, 35, 49, 0.92);
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+html[data-theme="dark"] .app-bg .auth-input::placeholder {
+  color: #b5c0d5;
+  opacity: 1;
 }
 

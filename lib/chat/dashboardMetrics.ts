@@ -445,10 +445,6 @@ function normalize(text: string): string {
     .trim();
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
 function hasMeaningfulData(
   entries: Array<{ ts: number; text: string }>,
   profile: NonNullable<CoachPlan["physicalProfile"]>
