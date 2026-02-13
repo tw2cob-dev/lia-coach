@@ -56,6 +56,18 @@ Run once to start a background agent:
 npm run clip:agent:start
 ```
 
+Check if it is alive:
+
+```bash
+npm run clip:agent:status
+```
+
+If Ctrl+V stops working, recover automatically:
+
+```bash
+npm run clip:agent:restart
+```
+
 Optional: auto-start on Windows login:
 
 ```bash
@@ -73,3 +85,19 @@ Stop the agent:
 ```bash
 npm run clip:agent:stop
 ```
+
+### Quick Troubleshooting
+
+Useful commands when `Ctrl+V` is intermittent:
+
+```bash
+npm run clip:agent:status
+```
+
+Checks whether the background clipboard agent is running and shows the latest saved screenshot.
+
+```bash
+npm run clip:agent:restart
+```
+
+Stops and starts the agent again to recover clipboard tagging quickly.

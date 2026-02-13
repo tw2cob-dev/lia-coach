@@ -1,7 +1,8 @@
 param(
   [string]$OutDir = "tmp/clipboard",
   [string]$Prefix = "screenshot",
-  [switch]$CopyTag
+  [switch]$CopyTag,
+  [bool]$UseRelativeTagPath = $true
 )
 
 Set-StrictMode -Version Latest
@@ -45,7 +46,13 @@ $fullPath = [IO.Path]::GetFullPath($targetPath)
 $image.Save($fullPath, [Drawing.Imaging.ImageFormat]::Png)
 $image.Dispose()
 
-$codexTag = "<image path=""$fullPath"">"
+$tagPath = if ($UseRelativeTagPath -and -not [IO.Path]::IsPathRooted($OutDir)) {
+  Join-Path $OutDir $fileName
+} else {
+  $fullPath
+}
+
+$codexTag = "<image path=""$tagPath"">"
 
 Write-Output "Saved: $fullPath"
 Write-Output "Codex: $codexTag"

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import {
   ChatEvent,
   createAssistantTextEvent,
@@ -27,13 +28,6 @@ const COST_INPUT_PER_1K = Number(process.env.NEXT_PUBLIC_LIA_COST_INPUT_PER_1K ?
 const COST_OUTPUT_PER_1K = Number(process.env.NEXT_PUBLIC_LIA_COST_OUTPUT_PER_1K ?? "0.0006");
 const OUTPUT_TOKEN_RESERVE = 300;
 const AUTH_STORAGE_KEY = "lia-auth";
-
-const QUICK_PROMPTS = [
-  { label: "Registrar comida", prompt: "Comida: tipo, cantidad aproximada y hora." },
-  { label: "Entrenamiento", prompt: "Entrenamiento: tipo, duracion e intensidad." },
-  { label: "Peso y medidas", prompt: "Peso hoy: (opcional) y como te sientes." },
-  { label: "Nota rapida", prompt: "Nota: energia, sueno o contexto del dia." },
-];
 
 const FILE_QUICK_ACTIONS = [
   "Resumen ejecutivo",
@@ -618,22 +612,6 @@ export default function ChatPage() {
           </div>
         </section>
 
-        <section className="mt-4">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Entradas rapidas</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {QUICK_PROMPTS.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => handleQuickPrompt(item.prompt)}
-                className="rounded-full bg-white/80 px-4 py-2 text-xs font-medium text-slate-700 shadow-sm"
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
         <section className="glass-card mt-5 flex min-h-[320px] flex-1 flex-col rounded-3xl p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Conversacion</p>
@@ -652,8 +630,35 @@ export default function ChatPage() {
             className="mt-3 flex-1 overflow-y-auto pr-1"
           >
             {!hasMessages && (
-              <div className="mt-10 text-center text-sm text-slate-500">
-                Tu espacio para registrar lo de hoy. Una frase es suficiente.
+              <div className="mt-6 rounded-2xl bg-white/80 p-4 text-sm text-slate-700 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Bienvenida</p>
+                <h2 className="mt-1 text-base font-semibold text-slate-900">
+                  Empecemos con algo simple
+                </h2>
+                <p className="mt-2 text-slate-600">
+                  Acabas de crear tu cuenta. Puedes escribir una sola frase y yo te guio paso a paso.
+                </p>
+                <div className="mt-3 space-y-1 text-xs text-slate-500">
+                  <p>1. Cuenta como te sientes hoy.</p>
+                  <p>2. Registra comida o actividad (si quieres).</p>
+                  <p>3. Cierra el dia con un resumen corto.</p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleQuickPrompt("Hoy me siento...")}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Empezar ahora
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickPrompt("Cierre de dia: ")}
+                    className="rounded-full border border-white/70 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+                  >
+                    Cierre de dia
+                  </button>
+                </div>
               </div>
             )}
             <ul className="space-y-3 pb-4">
@@ -685,10 +690,13 @@ export default function ChatPage() {
                     } ${isSelected ? "ring-1 ring-slate-200" : ""}`}
                   >
                     {isImage && message.image?.src && (
-                      <img
+                      <Image
                         src={message.image.src}
                         alt={message.content || message.image.name || "Imagen subida"}
-                        className="mb-2 max-w-full rounded-xl"
+                        width={message.image.width ?? 1024}
+                        height={message.image.height ?? 1024}
+                        className="mb-2 h-auto max-w-full rounded-xl"
+                        unoptimized
                       />
                     )}
                     {isFile && fileData?.name && (
@@ -769,17 +777,15 @@ export default function ChatPage() {
             </ul>
             <div ref={endRef} />
           </main>
-        </section>
-
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleSubmit();
-          }}
-          className="mt-5"
-        >
-          {selectedFileIds.length > 0 && (
-            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/80 px-3 py-2 text-xs text-slate-700 shadow-sm">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSubmit();
+            }}
+            className="mt-4 border-t border-white/70 pt-4"
+          >
+            {selectedFileIds.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
               <span className="font-medium">Archivos seleccionados: {selectedFileIds.length}</span>
               {selectedFiles.slice(0, MAX_SELECTED_FILES).map((file) => (
                 <span key={file.id} className="rounded-full bg-white px-3 py-1 shadow-sm">
@@ -814,15 +820,18 @@ export default function ChatPage() {
               >
                 Limpiar
               </button>
-            </div>
-          )}
-          {pendingAttachment && (
-            <div className="mb-3 flex items-center gap-3 rounded-2xl bg-white/80 p-3 shadow-sm">
+              </div>
+            )}
+            {pendingAttachment && (
+              <div className="mb-3 flex items-center gap-3 rounded-2xl bg-white/75 p-3 shadow-sm">
               {pendingAttachment.type === "image" ? (
-                <img
+                <Image
                   src={pendingAttachment.src}
                   alt={pendingAttachment.name || "Imagen seleccionada"}
+                  width={56}
+                  height={56}
                   className="h-14 w-14 rounded-xl object-cover"
+                  unoptimized
                 />
               ) : (
                 <div className="h-14 w-14 rounded-xl bg-white px-2 py-1 text-[10px] text-slate-500 shadow-sm">
@@ -851,48 +860,68 @@ export default function ChatPage() {
               >
                 Quitar
               </button>
-            </div>
-          )}
+              </div>
+            )}
 
-          <div className="flex items-end gap-3 rounded-3xl bg-white/85 p-3 shadow-lg">
-            <button
-              type="button"
-              onClick={() => attachInputRef.current?.click()}
-              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-600 shadow-sm"
-              disabled={isStreaming}
-              aria-label="Adjuntar"
-            >
-              +
-            </button>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Escribe aqui..."
-              className="max-h-[168px] flex-1 resize-none bg-transparent text-sm text-slate-800 outline-none"
-              rows={1}
-              disabled={isStreaming}
-            />
-            <button
-              type="button"
-              onClick={handleVoiceToggle}
-              className={`flex h-11 w-11 items-center justify-center rounded-2xl border border-white/60 bg-white/80 text-xs font-semibold text-slate-600 shadow-sm ${
-                isRecording ? "ring-2 ring-slate-300" : ""
-              }`}
-              disabled={isStreaming}
-            >
-              {isRecording ? "Stop" : "Voz"}
-            </button>
-            <button
-              type="submit"
-              className="cta-gradient flex h-11 items-center justify-center rounded-2xl px-4 text-sm font-semibold text-white shadow-sm"
-              disabled={isStreaming}
-            >
-              Enviar
-            </button>
-          </div>
-        </form>
+            <div className="flex items-end gap-2 rounded-2xl border border-white/70 bg-white/70 p-2 shadow-sm">
+              <button
+                type="button"
+                onClick={() => attachInputRef.current?.click()}
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-600 shadow-sm"
+                disabled={isStreaming}
+                aria-label="Adjuntar"
+              >
+                +
+              </button>
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Escribe aqui..."
+                className="max-h-[168px] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-800 outline-none"
+                rows={1}
+                disabled={isStreaming}
+              />
+              <button
+                type="button"
+                onClick={handleVoiceToggle}
+                className={`flex h-10 w-10 items-center justify-center rounded-xl border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
+                  isRecording ? "ring-2 ring-red-300 text-red-500" : ""
+                }`}
+                disabled={isStreaming}
+                aria-label={isRecording ? "Detener grabacion" : "Grabar voz"}
+                title={isRecording ? "Detener grabacion" : "Grabar voz"}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  className="h-5 w-5"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 3.5a3.5 3.5 0 0 0-3.5 3.5v5a3.5 3.5 0 1 0 7 0V7A3.5 3.5 0 0 0 12 3.5Z"
+                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 11.5a5.5 5.5 0 0 0 11 0" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 17v3.5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 20.5h5" />
+                </svg>
+              </button>
+              <button
+                type="submit"
+                className="cta-gradient flex h-10 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white shadow-sm"
+                disabled={isStreaming}
+              >
+                Enviar
+              </button>
+            </div>
+          </form>
+        </section>
         <input
           ref={attachInputRef}
           type="file"

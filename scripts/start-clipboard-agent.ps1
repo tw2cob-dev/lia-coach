@@ -4,14 +4,18 @@ $ErrorActionPreference = "Stop"
 $scriptPath = Join-Path $PSScriptRoot "clipboard-auto-tag.ps1"
 $repoRoot = Split-Path $PSScriptRoot -Parent
 
-$pattern = "(?i)-File\s+.*clipboard-auto-tag\.ps1"
-$running = Get-CimInstance Win32_Process |
+function Get-AgentProcesses {
+  $pattern = "(?i)-File\s+.*clipboard-auto-tag\.ps1"
+  return Get-CimInstance Win32_Process |
   Where-Object {
     $_.Name -like "powershell*" -and
     $_.ProcessId -ne $PID -and
     $_.CommandLine -and
     $_.CommandLine -match $pattern
   }
+}
+
+$running = Get-AgentProcesses
 
 if ($running) {
   Write-Output "Clipboard agent already running."
@@ -26,5 +30,11 @@ Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
   "-File",
   $scriptPath
 ) -WorkingDirectory $repoRoot | Out-Null
+
+Start-Sleep -Milliseconds 700
+$started = Get-AgentProcesses
+if (-not $started) {
+  throw "Clipboard agent failed to start."
+}
 
 Write-Output "Clipboard agent started."

@@ -2,6 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  type User,
+} from "firebase/auth";
+import { getFirebaseAuth } from "../../lib/firebase/client";
 
 const AUTH_STORAGE_KEY = "lia-auth";
 
@@ -13,38 +22,97 @@ type AuthUser = {
   email: string;
 };
 
+function toAuthUser(user: User): AuthUser {
+  const fallbackName = user.email?.split("@")[0] ?? "Usuario";
+  return {
+    id: user.uid,
+    name: user.displayName?.trim() || fallbackName,
+    email: user.email ?? "",
+  };
+}
+
+function mapFirebaseError(raw: unknown): string {
+  const genericMessage =
+    raw instanceof Error && typeof raw.message === "string" ? raw.message : "";
+  const errorCode =
+    typeof raw === "object" &&
+    raw !== null &&
+    "code" in raw &&
+    typeof (raw as { code?: unknown }).code === "string"
+      ? (raw as { code: string }).code
+      : "";
+
+  if (errorCode === "auth/email-already-in-use") return "Este email ya esta registrado.";
+  if (errorCode === "auth/invalid-email") return "Email invalido.";
+  if (errorCode === "auth/weak-password") return "La contrasena es demasiado debil.";
+  if (errorCode === "auth/operation-not-allowed") {
+    return "Email/Password no esta activado en Firebase Authentication.";
+  }
+  if (errorCode === "auth/unauthorized-domain") {
+    return "Dominio no autorizado. Agrega localhost en Firebase Authentication.";
+  }
+  if (errorCode === "auth/invalid-api-key") {
+    return "API key invalida. Revisa NEXT_PUBLIC_FIREBASE_API_KEY.";
+  }
+  if (errorCode === "auth/network-request-failed") {
+    return "Fallo de red al conectar con Firebase.";
+  }
+  if (errorCode === "auth/configuration-not-found") {
+    return "Configuracion de autenticacion incompleta en Firebase.";
+  }
+  if (errorCode === "auth/user-not-found") return "Usuario no encontrado.";
+  if (errorCode === "auth/wrong-password" || errorCode === "auth/invalid-credential") {
+    return "Credenciales invalidas.";
+  }
+  if (errorCode === "auth/too-many-requests") {
+    return "Demasiados intentos. Espera un momento y vuelve a intentar.";
+  }
+
+  if (errorCode && process.env.NODE_ENV !== "production") {
+    return `Error Firebase: ${errorCode}`;
+  }
+  if (genericMessage && process.env.NODE_ENV !== "production") {
+    return `Error: ${genericMessage}`;
+  }
+  return "Error inesperado.";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("register");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  const establishSession = async (user: User) => {
+    await fetch("/api/auth/session", { method: "POST" });
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(toAuthUser(user)));
+  };
 
   const handleRegister = async () => {
     setStatus("");
     setIsLoading(true);
     try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(data.error || "No se pudo registrar.");
+      if (!name.trim() || !email.trim() || !password.trim()) {
+        setStatus("Faltan datos.");
         return;
       }
+
+      const auth = getFirebaseAuth();
+      const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      if (name.trim()) {
+        await updateProfile(credential.user, { displayName: name.trim() });
+      }
+      await sendEmailVerification(credential.user);
+      await signOut(auth);
       setMode("verify");
       setStatus(
-        data.needsVerification
-          ? "Tu cuenta ya existia sin verificar. Te hemos reenviado un codigo."
-          : "Te enviamos un codigo al email.",
+        "Cuenta creada. Revisa tu email (incluyendo Spam/No deseado), pulsa el enlace y vuelve aqui."
       );
-    } catch {
-      setStatus("Error al conectar.");
+    } catch (error) {
+      setStatus(mapFirebaseError(error));
     } finally {
       setIsLoading(false);
     }
@@ -54,42 +122,50 @@ export default function LoginPage() {
     setStatus("");
     setIsLoading(true);
     try {
-      const response = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(data.error || "Codigo invalido.");
+      if (!email.trim() || !password.trim()) {
+        setStatus("Necesitas email y contrasena para comprobar la verificacion.");
         return;
       }
-      setMode("login");
-      setStatus("Email verificado. Ya puedes entrar.");
-    } catch {
-      setStatus("Error al conectar.");
+
+      const auth = getFirebaseAuth();
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      await credential.user.reload();
+      if (!credential.user.emailVerified) {
+        setStatus("Tu email aun no esta verificado. Abre el correo y pulsa el enlace.");
+        return;
+      }
+
+      await establishSession(credential.user);
+      router.push("/chat");
+    } catch (error) {
+      setStatus(mapFirebaseError(error));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleResendCode = async () => {
+  const handleResendVerification = async () => {
     setStatus("");
     setIsLoading(true);
     try {
-      const response = await fetch("/api/auth/resend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(data.error || "No se pudo reenviar el codigo.");
+      if (!email.trim() || !password.trim()) {
+        setStatus("Escribe email y contrasena para reenviar la verificacion.");
         return;
       }
-      setStatus("Te enviamos un nuevo codigo al email.");
-    } catch {
-      setStatus("Error al conectar.");
+
+      const auth = getFirebaseAuth();
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      await credential.user.reload();
+      if (credential.user.emailVerified) {
+        setStatus("Tu email ya esta verificado. Puedes iniciar sesion.");
+        return;
+      }
+
+      await sendEmailVerification(credential.user);
+      await signOut(auth);
+      setStatus("Te enviamos un nuevo email. Revisa tambien Spam/No deseado.");
+    } catch (error) {
+      setStatus(mapFirebaseError(error));
     } finally {
       setIsLoading(false);
     }
@@ -99,21 +175,23 @@ export default function LoginPage() {
     setStatus("");
     setIsLoading(true);
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(data.error || "No se pudo iniciar sesion.");
+      if (!email.trim() || !password.trim()) {
+        setStatus("Faltan datos.");
         return;
       }
-      const user = data.user as AuthUser;
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+
+      const auth = getFirebaseAuth();
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      await credential.user.reload();
+      if (!credential.user.emailVerified) {
+        setStatus("Necesitas verificar tu email antes de entrar.");
+        return;
+      }
+
+      await establishSession(credential.user);
       router.push("/chat");
-    } catch {
-      setStatus("Error al conectar.");
+    } catch (error) {
+      setStatus(mapFirebaseError(error));
     } finally {
       setIsLoading(false);
     }
@@ -133,7 +211,7 @@ export default function LoginPage() {
             <div className="flex gap-2 text-xs">
               {[
                 { id: "register", label: "Registro" },
-                { id: "verify", label: "Verificacion" },
+                { id: "verify", label: "Verificar email" },
                 { id: "login", label: "Entrar" },
               ].map((item) => (
                 <button
@@ -150,7 +228,7 @@ export default function LoginPage() {
             </div>
 
             <div className="mt-4 space-y-3">
-              {(mode === "register") && (
+              {mode === "register" && (
                 <input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -165,30 +243,26 @@ export default function LoginPage() {
                 type="email"
                 className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
               />
-              {(mode === "register" || mode === "login") && (
-                <input
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Contrasena"
-                  type="password"
-                  className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
-                />
-              )}
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Contrasena"
+                type="password"
+                className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
+              />
               {mode === "verify" && (
                 <div className="space-y-2">
-                  <input
-                    value={code}
-                    onChange={(event) => setCode(event.target.value)}
-                    placeholder="Codigo de 6 digitos"
-                    className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
-                  />
+                  <p className="text-xs text-slate-600">
+                    Abre el correo de verificacion, revisa tambien Spam/No deseado, pulsa el
+                    enlace y luego vuelve aqui para continuar.
+                  </p>
                   <button
                     type="button"
-                    onClick={handleResendCode}
+                    onClick={handleResendVerification}
                     className="text-xs font-medium text-slate-600 underline underline-offset-2"
                     disabled={isLoading}
                   >
-                    Reenviar codigo
+                    Reenviar email de verificacion
                   </button>
                 </div>
               )}
@@ -207,7 +281,7 @@ export default function LoginPage() {
                 : mode === "register"
                 ? "Crear cuenta"
                 : mode === "verify"
-                ? "Verificar"
+                ? "Ya verifique mi email"
                 : "Entrar"}
             </button>
           </div>
@@ -220,4 +294,3 @@ export default function LoginPage() {
     </div>
   );
 }
-

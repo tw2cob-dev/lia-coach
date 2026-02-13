@@ -11,11 +11,14 @@
     "clip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/paste-clipboard-image.ps1 -CopyTag",
     "clip:agent:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-clipboard-agent.ps1",
     "clip:agent:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-clipboard-agent.ps1",
+    "clip:agent:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status-clipboard-agent.ps1",
+    "clip:agent:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-clipboard-agent.ps1",
     "clip:agent:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-clipboard-agent-startup.ps1"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.52.0",
     "bcryptjs": "^2.4.3",
+    "firebase": "^12.9.0",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
