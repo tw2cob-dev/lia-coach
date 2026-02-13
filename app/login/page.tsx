@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -25,27 +25,27 @@ function mapFirebaseError(raw: unknown): string {
       ? (raw as { code: string }).code
       : "";
 
-  if (errorCode === "auth/email-already-in-use") return "Este email ya esta registrado.";
-  if (errorCode === "auth/invalid-email") return "Email invalido.";
-  if (errorCode === "auth/weak-password") return "La contrasena es demasiado debil.";
+  if (errorCode === "auth/email-already-in-use") return "Este email ya est\u00e1 registrado.";
+  if (errorCode === "auth/invalid-email") return "Email inv\u00e1lido.";
+  if (errorCode === "auth/weak-password") return "La contrase\u00f1a es demasiado d\u00e9bil.";
   if (errorCode === "auth/operation-not-allowed") {
-    return "Email/Password no esta activado en Firebase Authentication.";
+    return "Email/Password no est\u00e1 activado en Firebase Authentication.";
   }
   if (errorCode === "auth/unauthorized-domain") {
     return "Dominio no autorizado. Agrega localhost en Firebase Authentication.";
   }
   if (errorCode === "auth/invalid-api-key") {
-    return "API key invalida. Revisa NEXT_PUBLIC_FIREBASE_API_KEY.";
+    return "API key inv\u00e1lida. Revisa NEXT_PUBLIC_FIREBASE_API_KEY.";
   }
   if (errorCode === "auth/network-request-failed") {
     return "Fallo de red al conectar con Firebase.";
   }
   if (errorCode === "auth/configuration-not-found") {
-    return "Configuracion de autenticacion incompleta en Firebase.";
+    return "Configuraci\u00f3n de autenticaci\u00f3n incompleta en Firebase.";
   }
   if (errorCode === "auth/user-not-found") return "Usuario no encontrado.";
   if (errorCode === "auth/wrong-password" || errorCode === "auth/invalid-credential") {
-    return "Credenciales invalidas.";
+    return "Credenciales inv\u00e1lidas.";
   }
   if (errorCode === "auth/too-many-requests") {
     return "Demasiados intentos. Espera un momento y vuelve a intentar.";
@@ -62,7 +62,7 @@ function mapFirebaseError(raw: unknown): string {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>("register");
+  const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -78,7 +78,7 @@ export default function LoginPage() {
       body: JSON.stringify({ idToken }),
     });
     if (!response.ok) {
-      throw new Error("No se pudo establecer la sesion segura.");
+      throw new Error("No se pudo establecer la sesi\u00f3n segura.");
     }
   };
 
@@ -100,7 +100,7 @@ export default function LoginPage() {
       await signOut(auth);
       setMode("verify");
       setStatus(
-        "Cuenta creada. Revisa tu email (incluyendo Spam/No deseado), pulsa el enlace y vuelve aqui."
+        "Cuenta creada. Revisa tu email (incluyendo Spam/No deseado), pulsa el enlace y vuelve aqu\u00ed."
       );
     } catch (error) {
       setStatus(mapFirebaseError(error));
@@ -114,7 +114,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       if (!email.trim() || !password.trim()) {
-        setStatus("Necesitas email y contrasena para comprobar la verificacion.");
+        setStatus("Necesitas email y contrase\u00f1a para comprobar la verificaci\u00f3n.");
         return;
       }
 
@@ -124,7 +124,7 @@ export default function LoginPage() {
       if (!credential.user.emailVerified) {
         await signOut(auth).catch(() => undefined);
         setStatus(
-          `Tu email aun no esta verificado en Firebase (proyecto: ${firebaseProjectId || "N/D"}). Abre el ultimo correo y pulsa el enlace.`
+          `Tu email a\u00fan no est\u00e1 verificado en Firebase (proyecto: ${firebaseProjectId || "N/D"}). Abre el \u00faltimo correo y pulsa el enlace.`
         );
         return;
       }
@@ -143,7 +143,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       if (!email.trim() || !password.trim()) {
-        setStatus("Escribe email y contrasena para reenviar la verificacion.");
+        setStatus("Escribe email y contrase\u00f1a para reenviar la verificaci\u00f3n.");
         return;
       }
 
@@ -151,13 +151,13 @@ export default function LoginPage() {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       await credential.user.reload();
       if (credential.user.emailVerified) {
-        setStatus("Tu email ya esta verificado. Puedes iniciar sesion.");
+        setStatus("Tu email ya est\u00e1 verificado. Puedes iniciar sesi\u00f3n.");
         return;
       }
 
       await sendEmailVerification(credential.user);
       await signOut(auth);
-      setStatus("Te enviamos un nuevo email. Revisa tambien Spam/No deseado.");
+      setStatus("Te enviamos un nuevo email. Revisa tambi\u00e9n Spam/No deseado.");
     } catch (error) {
       setStatus(mapFirebaseError(error));
     } finally {
@@ -197,30 +197,35 @@ export default function LoginPage() {
       <div className="mx-auto flex min-h-screen max-w-[420px] flex-col justify-between px-6 pb-10 pt-10">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">LIA Coach</p>
-          <h1 className="font-display mt-3 text-3xl font-semibold text-slate-900">Bienvenida</h1>
+          <h1 className="font-display mt-3 text-3xl font-semibold text-slate-900">
+            {mode === "login" ? "Bienvenida" : "Crea tu cuenta"}
+          </h1>
           <p className="mt-3 text-sm text-slate-600">
-            Tu acompanamiento diario sin culpa. Crea tu cuenta y verifica tu email.
+            {mode === "login"
+              ? "Accede con tu cuenta registrada para continuar."
+              : "Completa tu registro y verifica tu email para poder entrar."}
           </p>
 
           <div className="glass-card mt-6 rounded-3xl p-5">
-            <div className="flex gap-2 text-xs">
-              {[
-                { id: "register", label: "Registro" },
-                { id: "verify", label: "Verificar email" },
-                { id: "login", label: "Entrar" },
-              ].map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setMode(item.id as Mode)}
-                  className={`rounded-full px-3 py-1 ${
-                    mode === item.id ? "bg-slate-900 text-white" : "bg-white/80 text-slate-500"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            {mode !== "login" && (
+              <div className="flex gap-2 text-xs">
+                {[
+                  { id: "register", label: "Registro" },
+                  { id: "verify", label: "Verificar email" },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setMode(item.id as Exclude<Mode, "login">)}
+                    className={`rounded-full px-3 py-1 ${
+                      mode === item.id ? "bg-slate-900 text-white" : "bg-white/80 text-slate-500"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="mt-4 space-y-3">
               {mode === "register" && (
@@ -241,15 +246,15 @@ export default function LoginPage() {
               <input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Contrasena"
+                placeholder="Contrase\u00f1a"
                 type="password"
                 className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
               />
               {mode === "verify" && (
                 <div className="space-y-2">
                   <p className="text-xs text-slate-600">
-                    Abre el correo de verificacion, revisa tambien Spam/No deseado, pulsa el
-                    enlace y luego vuelve aqui para continuar.
+                    Abre el correo de verificaci\u00f3n, revisa tambi\u00e9n Spam/No deseado, pulsa el
+                    enlace y luego vuelve aqu\u00ed para continuar.
                   </p>
                   <button
                     type="button"
@@ -257,9 +262,40 @@ export default function LoginPage() {
                     className="text-xs font-medium text-slate-600 underline underline-offset-2"
                     disabled={isLoading}
                   >
-                    Reenviar email de verificacion
+                    Reenviar email de verificaci\u00f3n
                   </button>
                 </div>
+              )}
+              {mode === "login" ? (
+                <p className="text-xs text-slate-600">
+                  {"\u00bfNo tienes cuenta? "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatus("");
+                      setMode("register");
+                    }}
+                    className="font-medium text-slate-700 underline underline-offset-2"
+                    disabled={isLoading}
+                  >
+                    Reg\u00edstrate
+                  </button>
+                </p>
+              ) : (
+                <p className="text-xs text-slate-600">
+                  {"\u00bfYa tienes cuenta? "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatus("");
+                      setMode("login");
+                    }}
+                    className="font-medium text-slate-700 underline underline-offset-2"
+                    disabled={isLoading}
+                  >
+                    Inicia sesi\u00f3n
+                  </button>
+                </p>
               )}
             </div>
 
@@ -276,7 +312,7 @@ export default function LoginPage() {
                 : mode === "register"
                 ? "Crear cuenta"
                 : mode === "verify"
-                ? "Ya verifique mi email"
+                ? "Ya verifiqu\u00e9 mi email"
                 : "Entrar"}
             </button>
           </div>

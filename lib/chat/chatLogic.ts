@@ -1,5 +1,5 @@
 import { buildAIContext, buildLLMMessages } from "../aiContext";
-import { generateAssistantReply, streamAssistantReply } from "../aiClient";
+import { AIReplyDebug, generateAssistantReply, streamAssistantReply } from "../aiClient";
 import { ChatEvent, FileChatEventWithFile, createAssistantTextEvent } from "../chatEvents";
 import { CoachPlan, getCoachPlan, upsertCoachPlan } from "../coachPlan";
 import { COACH_SYSTEM_PROMPT } from "../prompts/coachPrompt";
@@ -11,13 +11,15 @@ type PersistEvents = (events: ChatEvent[]) => void;
 
 const MAX_SELECTED_FILES = 3;
 const MAX_SELECTED_EXCERPT_CHARS = 2000;
+const MAX_USER_MEMORY_CHARS = 2400;
 type CognitiveProfile = NonNullable<CoachPlan["cognitiveProfile"]>;
 
 export async function createAssistantReply(
   events: ChatEvent[],
   turnId?: string,
   selectedFileIds: string[] = [],
-  userName?: string
+  userName?: string,
+  onDebug?: (debug: AIReplyDebug) => void
 ): Promise<ChatEvent> {
   const context = buildAIContext(events);
   const messages = buildLLMMessages(events);
@@ -25,25 +27,21 @@ export async function createAssistantReply(
   const lastUserText = getLatestUserText(events);
   const coachPlan = getPlanWithCognitiveUpdate(lastUserText);
   const coachIntent = detectCoachIntent(lastUserText);
-  const coachContext = buildCoachContext(coachPlan, context, lastUserText);
+  const coachContext = coachIntent ? buildCoachContext(coachPlan, context, lastUserText) : "";
+  const userMemoryContext = buildUserMemoryContext(coachPlan, context);
 
   const todaySummary = `Hoy: comida ${context.todaySummary.food}, entrenamiento ${context.todaySummary.training}.`;
-  const weekSummary = `Ultimos 7 dias: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
-  const systemContext = [weekSummary, selectedFilesContext, coachContext].filter(Boolean).join("\n");
-
-  if (!process.env.OPENAI_API_KEY) {
-    const fallbackText = buildCoachFallbackResponse(lastUserText, coachPlan, userName);
-    if (isWeeklyPlanRequest(lastUserText)) {
-      saveWeeklyPlanFromContent(fallbackText);
-    }
-    return { ...(createAssistantTextEvent(fallbackText) as ChatEvent), turnId };
-  }
+  const plainWeekSummary = `Ultimos 7 dias: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
+  const systemContext = coachContext
+    ? [userMemoryContext, selectedFilesContext, coachContext].filter(Boolean).join("\n")
+    : [plainWeekSummary, userMemoryContext, selectedFilesContext].filter(Boolean).join("\n");
 
   const responseText = await generateAssistantReply({
     messages,
     todaySummary,
     weekSummary: systemContext,
     userName,
+    onDebug,
   });
 
   if (coachIntent && isWeeklyPlanRequest(lastUserText)) {
@@ -58,7 +56,8 @@ export async function streamAssistantReplyText(
   onToken: (chunk: string) => void,
   turnId?: string,
   selectedFileIds: string[] = [],
-  userName?: string
+  userName?: string,
+  onDebug?: (debug: AIReplyDebug) => void
 ): Promise<ChatEvent> {
   const context = buildAIContext(events);
   const messages = buildLLMMessages(events);
@@ -66,20 +65,14 @@ export async function streamAssistantReplyText(
   const lastUserText = getLatestUserText(events);
   const coachPlan = getPlanWithCognitiveUpdate(lastUserText);
   const coachIntent = detectCoachIntent(lastUserText);
-  const coachContext = buildCoachContext(coachPlan, context, lastUserText);
+  const coachContext = coachIntent ? buildCoachContext(coachPlan, context, lastUserText) : "";
+  const userMemoryContext = buildUserMemoryContext(coachPlan, context);
 
   const todaySummary = `Hoy: comida ${context.todaySummary.food}, entrenamiento ${context.todaySummary.training}.`;
-  const weekSummary = `Ultimos 7 dias: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
-  const systemContext = [weekSummary, selectedFilesContext, coachContext].filter(Boolean).join("\n");
-
-  if (!process.env.OPENAI_API_KEY) {
-    const fallbackText = buildCoachFallbackResponse(lastUserText, coachPlan, userName);
-    onToken(fallbackText);
-    if (isWeeklyPlanRequest(lastUserText)) {
-      saveWeeklyPlanFromContent(fallbackText);
-    }
-    return { ...(createAssistantTextEvent(fallbackText) as ChatEvent), turnId };
-  }
+  const plainWeekSummary = `Ultimos 7 dias: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
+  const systemContext = coachContext
+    ? [userMemoryContext, selectedFilesContext, coachContext].filter(Boolean).join("\n")
+    : [plainWeekSummary, userMemoryContext, selectedFilesContext].filter(Boolean).join("\n");
 
   const responseText = await streamAssistantReply({
     messages,
@@ -87,6 +80,7 @@ export async function streamAssistantReplyText(
     weekSummary: systemContext,
     userName,
     onToken,
+    onDebug,
   });
 
   if (coachIntent && isWeeklyPlanRequest(lastUserText)) {
@@ -106,6 +100,7 @@ export async function streamAssistantReplyForFile(args: {
   onToken: (chunk: string) => void;
   selectedFileIds?: string[];
   userName?: string;
+  onDebug?: (debug: AIReplyDebug) => void;
 }): Promise<ChatEvent> {
   const { fileEvent, fileData, turnId, updateEvents, persistEvents, onToken } = args;
   const selectedFileIds = args.selectedFileIds ?? [];
@@ -206,20 +201,14 @@ export async function streamAssistantReplyForFile(args: {
   const lastUserText = getLatestUserText(latestEvents);
   const coachPlan = getPlanWithCognitiveUpdate(lastUserText);
   const coachIntent = detectCoachIntent(lastUserText);
-  const coachContext = buildCoachContext(coachPlan, context, lastUserText);
+  const coachContext = coachIntent ? buildCoachContext(coachPlan, context, lastUserText) : "";
+  const userMemoryContext = buildUserMemoryContext(coachPlan, context);
 
   const todaySummary = `Hoy: comida ${context.todaySummary.food}, entrenamiento ${context.todaySummary.training}.`;
-  const weekSummary = `Ultimos 7 dias: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
-  const systemContext = [weekSummary, selectedFilesContext, coachContext].filter(Boolean).join("\n");
-
-  if (!process.env.OPENAI_API_KEY) {
-    const fallbackText = buildCoachFallbackResponse(lastUserText, coachPlan, userName);
-    onToken(fallbackText);
-    if (isWeeklyPlanRequest(lastUserText)) {
-      saveWeeklyPlanFromContent(fallbackText);
-    }
-    return { ...(createAssistantTextEvent(fallbackText) as ChatEvent), turnId };
-  }
+  const plainWeekSummary = `Ultimos 7 dias: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
+  const systemContext = coachContext
+    ? [userMemoryContext, selectedFilesContext, coachContext].filter(Boolean).join("\n")
+    : [plainWeekSummary, userMemoryContext, selectedFilesContext].filter(Boolean).join("\n");
 
   const responseText = await streamAssistantReply({
     messages,
@@ -227,6 +216,7 @@ export async function streamAssistantReplyForFile(args: {
     weekSummary: systemContext,
     userName,
     onToken,
+    onDebug: args.onDebug,
   });
 
   if (coachIntent && isWeeklyPlanRequest(lastUserText)) {
@@ -298,14 +288,9 @@ function buildCoachContext(
   context: ReturnType<typeof buildAIContext>,
   messageText: string
 ): string {
-  const coachPlanBlock = `CoachPlan: ${JSON.stringify(plan)}`;
-  const cognitiveBlock = `perfil_cognitivo: ${JSON.stringify(
-    plan.cognitiveProfile ?? createDefaultCognitiveProfile()
-  )}`;
-  const todaySummary = `TodaySummary: comida ${context.todaySummary.food}, entrenamiento ${context.todaySummary.training}.`;
-  const weekSummary = `WeekSummary: comida ${context.weekSummary.food}, entrenamiento ${context.weekSummary.training}.`;
   const recentEvents = formatRecentEvents(context.recentEvents);
   const styleHint = buildStyleHint(messageText, plan.cognitiveProfile ?? createDefaultCognitiveProfile());
+  const missingDataHint = buildMissingDataHint(plan.physicalProfile);
   const planHint = isWeeklyPlanRequest(messageText)
     ? "Si piden plan semanal, entrega un plan semanal en bullets para lunes-domingo."
     : "";
@@ -314,17 +299,38 @@ function buildCoachContext(
     : "";
   return [
     COACH_SYSTEM_PROMPT,
-    coachPlanBlock,
-    cognitiveBlock,
-    todaySummary,
-    weekSummary,
     recentEvents,
     styleHint,
+    missingDataHint,
     planHint,
     checkInHint,
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function buildUserMemoryContext(
+  plan: CoachPlan,
+  context: ReturnType<typeof buildAIContext>
+): string {
+  const memory = {
+    cognitiveProfile: plan.cognitiveProfile ?? createDefaultCognitiveProfile(),
+    goals: plan.goals ?? {},
+    weeklyPlan: plan.weeklyPlan
+      ? {
+          weekStartISO: plan.weeklyPlan.weekStartISO,
+          summary: truncateText(plan.weeklyPlan.content, 320),
+        }
+      : undefined,
+    signals: {
+      todayFood: context.todaySummary.food,
+      todayTraining: context.todaySummary.training,
+      weekFood: context.weekSummary.food,
+      weekTraining: context.weekSummary.training,
+      lastWeight: context.weekSummary.lastWeight,
+    },
+  };
+  return `UserMemory: ${truncateText(JSON.stringify(memory), MAX_USER_MEMORY_CHARS)}`;
 }
 
 function formatRecentEvents(events: ChatEvent[]): string {
@@ -347,31 +353,93 @@ function buildCoachFallbackResponse(
   const namePrefix = buildNamePrefix(messageText, userName);
   const profile = plan.cognitiveProfile ?? createDefaultCognitiveProfile();
   const stylePrefix = profile.estilo === "serio" ? "" : "Perfecto. ";
+  const normalized = normalizeText(messageText);
+
   if (isWeeklyPlanRequest(messageText)) {
     return `${namePrefix}${stylePrefix}${buildDeterministicWeeklyPlanContent(plan)}`;
   }
+  if (isWeightLossRequest(normalized)) {
+    return [
+      `${namePrefix}🔥 Objetivo: perder peso sin extremos`,
+      "",
+      `${stylePrefix}vamos con base simple y sostenible:`,
+      "- Deficit suave (sin pasar hambre).",
+      "- Proteina en 3-4 tomas al dia.",
+      "- Pasos diarios + fuerza 2-4 dias por semana.",
+      "",
+      "✅ Siguiente paso: dime que has comido hoy y que ejercicio hiciste (o haras) para actualizar tu marcador.",
+    ].join("\n");
+  }
+  if (isLowEnergyRequest(normalized)) {
+    return [
+      `${namePrefix}⚠️ Vamos a priorizar energia y seguridad`,
+      "",
+      "Primero: es cansancio normal o te encuentras mal?",
+      "",
+      "✅ Si es cansancio normal: hoy minimo viable -> paseo suave + cena simple con proteina y verdura.",
+      "⚠️ Si hay malestar real: mejor bajar carga y consultar profesional si empeora.",
+    ].join("\n");
+  }
+  if (isOvereatRequest(normalized)) {
+    return [
+      `${namePrefix}✅ No pasa nada, se puede reequilibrar hoy`,
+      "",
+      "Sin castigos ni compensaciones extremas.",
+      "",
+      "🧠 Siguiente paso: dime que has comido (aprox) y te digo el mejor ajuste para el resto del dia.",
+    ].join("\n");
+  }
   if (isCheckInRequest(messageText)) {
     return [
-      `${namePrefix}${profile.estilo === "serio" ? "" : "Vamos con "}check-in diario:`,
+      `${namePrefix}🧠 Check-in diario`,
+      "",
       "1) Comida: cumpliste tu objetivo hoy?",
       "2) Entreno: hiciste sesion? que tipo?",
       "3) Energia/descanso: como llegas hoy y que habito te costo mas?",
-      "Si quieres, dime 1 ajuste simple para manana.",
+      "",
+      "✅ Siguiente paso: si quieres, dime 1 ajuste simple para manana.",
     ].join("\n");
   }
-  if (/\bhablame mas simple|mas simple|no entiendo\b/.test(normalizeText(messageText))) {
-    return `${namePrefix}Perfecto. Te lo digo simple y directo: vamos a lo basico que si funciona.`;
+  if (isGreetingMessage(normalized)) {
+    return `${namePrefix}hola.\n\n✅ Dime en una frase que quieres mejorar hoy y te propongo un plan simple.`;
   }
-  if (/\bmas tecnico|ultra tecnico|tecnico\b/.test(normalizeText(messageText))) {
-    return `${namePrefix}Perfecto. Subo nivel tecnico desde ya y te doy respuestas mas precisas.`;
+  if (/\bhablame mas simple|mas simple|no entiendo\b/.test(normalized)) {
+    return `${namePrefix}✅ Perfecto. Te lo digo simple y directo: vamos a lo basico que si funciona.`;
   }
-  if (/\bultra resumido\b/.test(normalizeText(messageText))) {
-    return `${namePrefix}Vale: 1) Agua. 2) Proteina en la cena. 3) 20 min de paseo. Manana afinamos.`;
+  if (/\bmas tecnico|ultra tecnico|tecnico\b/.test(normalized)) {
+    return `${namePrefix}🧠 Perfecto. Subo nivel tecnico y te doy respuestas mas precisas desde ahora.`;
   }
-  if (/\bbromas|humor\b/.test(normalizeText(messageText))) {
-    return `${namePrefix}Hecho. Broma corta y seguimos: disciplina > drama. Que has comido hoy?`;
+  if (/\bultra resumido\b/.test(normalized)) {
+    return `${namePrefix}1) Agua.\n2) Proteina en la cena.\n3) 20 min de paseo.\n\n✅ Manana afinamos.`;
   }
-  return `${namePrefix}${stylePrefix}Estoy aqui para ayudarte con comida, entrenamiento, peso y habitos. Que necesitas ahora?`;
+  if (/\bbromas|humor\b/.test(normalized)) {
+    return `${namePrefix}Hecho. Broma corta y seguimos: disciplina > drama.\n\n✅ Que has comido hoy?`;
+  }
+  if (isProteinTimingQuestion(normalized)) {
+    return [
+      `${namePrefix}🧠 Buena pregunta.`,
+      "",
+      "Tomar proteina en 3-4 tomas ayuda a repartir mejor el estimulo muscular y a llegar mas facil al total diario.",
+      "",
+      "🔥 En la practica:",
+      "- Objetivo principal: llegar a tu proteina total del dia.",
+      "- Repartirla reduce picos de hambre y suele mejorar adherencia.",
+      "- Si un dia haces 2 tomas y cumples total, tambien sirve.",
+      "",
+      "✅ Regla simple: prioriza el total diario; reparte en 3-4 tomas cuando te sea comodo.",
+    ].join("\n");
+  }
+  if (isWhyQuestion(normalized)) {
+    return [
+      `${namePrefix}🧠 Te explico rapido el por que:`,
+      "",
+      "- Buscamos una estrategia efectiva y sostenible.",
+      "- Por eso priorizamos adherencia, hambre controlada y progreso semanal.",
+      "",
+      "✅ Si quieres, te lo bajo a tu caso con tus horarios y comidas reales.",
+    ].join("\n");
+  }
+  return `${namePrefix}${stylePrefix}\n\n🔥 Foco principal ahora: registrar comida y ejercicio para actualizar tu progreso.\n\n✅ Dime que has comido hoy y que actividad hiciste.`;
 }
 
 function buildDeterministicWeeklyPlanContent(plan: CoachPlan | null): string {
@@ -450,11 +518,13 @@ function buildNamePrefix(messageText: string, userName?: string): string {
 function getPlanWithCognitiveUpdate(messageText: string): CoachPlan {
   const currentPlan = getCoachPlan() ?? upsertCoachPlan({});
   const currentProfile = currentPlan.cognitiveProfile ?? createDefaultCognitiveProfile();
+  const currentPhysical = currentPlan.physicalProfile ?? {};
   const nextProfile = evolveCognitiveProfile(currentProfile, messageText);
-  if (isSameProfile(currentProfile, nextProfile)) {
+  const nextPhysical = evolvePhysicalProfile(currentPhysical, messageText);
+  if (isSameProfile(currentProfile, nextProfile) && isSamePhysicalProfile(currentPhysical, nextPhysical)) {
     return currentPlan;
   }
-  return upsertCoachPlan({ cognitiveProfile: nextProfile });
+  return upsertCoachPlan({ cognitiveProfile: nextProfile, physicalProfile: nextPhysical });
 }
 
 function evolveCognitiveProfile(profile: CognitiveProfile, messageText: string): CognitiveProfile {
@@ -582,6 +652,33 @@ function normalizeText(text: string): string {
     .trim();
 }
 
+function isGreetingMessage(text: string): boolean {
+  return /^(hola+|holaaaa+|buenas+|hey+|que tal|lia+)\b/.test(text);
+}
+
+function isWeightLossRequest(text: string): boolean {
+  return /\b(perder peso|bajar peso|bajar grasa|deficit)\b/.test(text);
+}
+
+function isLowEnergyRequest(text: string): boolean {
+  return /\b(reventado|sin energia|cansado|agotado)\b/.test(text);
+}
+
+function isOvereatRequest(text: string): boolean {
+  return /\b(comi fatal|he comido fatal|me pase comiendo|comi demasiado)\b/.test(text);
+}
+
+function isProteinTimingQuestion(text: string): boolean {
+  return (
+    /\b(por que|porque)\b/.test(text) &&
+    /\b(proteina|proteinas|toma|tomas|3|4)\b/.test(text)
+  );
+}
+
+function isWhyQuestion(text: string): boolean {
+  return /\b(por que|porque)\b/.test(text);
+}
+
 function createDefaultCognitiveProfile(): CognitiveProfile {
   return {
     nivel_tecnico: "basico",
@@ -589,6 +686,77 @@ function createDefaultCognitiveProfile(): CognitiveProfile {
     estilo: "neutral",
     preferencia_detalle: "medio",
   };
+}
+
+function evolvePhysicalProfile(
+  profile: NonNullable<CoachPlan["physicalProfile"]>,
+  messageText: string
+): NonNullable<CoachPlan["physicalProfile"]> {
+  const text = normalizeText(messageText);
+  const next = { ...profile };
+
+  if (!next.sex) {
+    if (/\b(hombre|masculino|varon)\b/.test(text)) next.sex = "male";
+    if (/\b(mujer|femenino)\b/.test(text)) next.sex = "female";
+  }
+  if (!next.ageYears) {
+    const age = text.match(/\b(\d{2})\s*(anos|años)\b/);
+    if (age) next.ageYears = clampRange(Number(age[1]), 12, 100);
+  }
+  if (!next.heightCm) {
+    const h = text.match(/\b(1[4-9]\d|2[0-2]\d)\s*cm\b/);
+    if (h) next.heightCm = clampRange(Number(h[1]), 120, 230);
+  }
+  {
+    const w = text.match(/\b(\d{2,3}(?:[.,]\d+)?)\s*kg\b/);
+    if (w) next.weightKg = clampRange(Number(w[1].replace(",", ".")), 35, 250);
+  }
+  if (!next.bodyFatPct) {
+    const bf = text.match(/\b(\d{1,2})\s*%\s*(grasa|bf)?\b/);
+    if (bf) next.bodyFatPct = clampRange(Number(bf[1]), 3, 70);
+  }
+  if (!next.activityLevel) {
+    if (/\bsedentari/.test(text)) next.activityLevel = "sedentary";
+    if (/\bligera|ligero\b/.test(text)) next.activityLevel = "light";
+    if (/\bmoderad/.test(text)) next.activityLevel = "moderate";
+    if (/\balta|intensa|muy activa/.test(text)) next.activityLevel = "very";
+  }
+
+  return next;
+}
+
+function isSamePhysicalProfile(
+  a: NonNullable<CoachPlan["physicalProfile"]>,
+  b: NonNullable<CoachPlan["physicalProfile"]>
+): boolean {
+  return (
+    a.sex === b.sex &&
+    a.ageYears === b.ageYears &&
+    a.heightCm === b.heightCm &&
+    a.weightKg === b.weightKg &&
+    a.bodyFatPct === b.bodyFatPct &&
+    a.activityLevel === b.activityLevel
+  );
+}
+
+function buildMissingDataHint(profile?: CoachPlan["physicalProfile"]): string {
+  const p = profile ?? {};
+  const missing: string[] = [];
+  if (!p.sex) missing.push("sexo");
+  if (!p.ageYears) missing.push("edad");
+  if (!p.heightCm) missing.push("altura");
+  if (!p.weightKg) missing.push("peso");
+  if (!p.activityLevel) missing.push("actividad base");
+  if (missing.length === 0) {
+    return "Datos energeticos completos. Ahora si, pide registro de comida y ejercicio del dia para actualizar progreso.";
+  }
+  return `Fase actual: completar estimacion energetica. Enumera y pide juntos estos faltantes: ${missing.join(", ")}. No pidas comida del dia todavia.`;
+}
+
+function clampRange(value: number, min: number, max: number): number | undefined {
+  if (!Number.isFinite(value)) return undefined;
+  if (value < min || value > max) return undefined;
+  return Math.round(value * 10) / 10;
 }
 
 function isSameProfile(a: CognitiveProfile, b: CognitiveProfile): boolean {
@@ -605,7 +773,7 @@ function buildStyleHint(messageText: string, profile: CognitiveProfile): string 
   const override = parseStyleOverride(normalized);
   const levelHint =
     profile.nivel_tecnico === "basico"
-      ? "Nivel basico: lenguaje cotidiano, pocas cifras, una accion clara."
+      ? "Nivel basico: lenguaje cotidiano, pocas cifras, una accion clara, sin formulas."
       : profile.nivel_tecnico === "medio"
       ? "Nivel medio: incluye alguna cifra y un por que breve."
       : profile.nivel_tecnico === "tecnico"
@@ -613,17 +781,18 @@ function buildStyleHint(messageText: string, profile: CognitiveProfile): string 
       : "Nivel ultra: explica mecanismos de forma concisa y comparativa.";
   const styleHint =
     override.estilo === "ultra_resumido" || profile.estilo === "ultra_resumido"
-      ? "Estilo ultra resumido: maximo 24 lineas y termina con una accion concreta."
+      ? "Estilo ultra resumido: maximo 4 lineas y termina con una accion concreta."
       : override.estilo === "serio" || profile.estilo === "serio"
       ? "Tono serio: directo, claro y sin bromas."
       : override.estilo === "humor_sutil" || profile.estilo === "humor_sutil"
       ? "Humor sutil permitido: una broma corta maximo."
       : "Tono neutral cercano y maduro.";
-  return `${levelHint} ${styleHint}`;
+  return `${levelHint} ${styleHint} Trabaja por fases: primero datos energeticos faltantes; luego registro de comida/ejercicio del dia. Nutricion detallada solo bajo peticion explicita.`;
 }
 
 export const __test__ = {
   buildCoachContext,
+  buildCoachFallbackResponse,
   isWeeklyPlanRequest,
   isCheckInRequest,
 };

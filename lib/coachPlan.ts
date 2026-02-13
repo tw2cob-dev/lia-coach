@@ -1,4 +1,12 @@
 export type CoachPlan = {
+  physicalProfile?: {
+    sex?: "male" | "female";
+    ageYears?: number;
+    heightCm?: number;
+    weightKg?: number;
+    bodyFatPct?: number;
+    activityLevel?: "sedentary" | "light" | "moderate" | "very";
+  };
   cognitiveProfile?: {
     nivel_tecnico: "basico" | "medio" | "tecnico" | "ultra";
     score_tecnico: number;
@@ -19,6 +27,17 @@ export type CoachPlan = {
     weekStartISO: string;
     content: string;
     generatedAtISO: string;
+  };
+  signals?: {
+    today?: {
+      dateISO: string;
+      intakeKcal?: number;
+      burnKcal?: number;
+      weightKg?: number;
+      activityMinutes?: number;
+      foods?: string[];
+      activities?: string[];
+    };
   };
   metadata: {
     version: number;
@@ -81,18 +100,49 @@ function normalizeCoachPlan(input: unknown): CoachPlan | null {
   const raw = input as Record<string, unknown>;
 
   const cognitiveProfile = normalizeCognitiveProfile(raw.cognitiveProfile);
+  const physicalProfile = normalizePhysicalProfile(raw.physicalProfile);
   const goals = normalizeGoals(raw.goals);
   const preferences = normalizePreferences(raw.preferences);
   const weeklyPlan = normalizeWeeklyPlan(raw.weeklyPlan);
+  const signals = normalizeSignals(raw.signals);
   const metadata = normalizeMetadata(raw.metadata);
 
   return {
+    physicalProfile,
     cognitiveProfile,
     goals,
     preferences,
     ...(weeklyPlan ? { weeklyPlan } : {}),
+    ...(signals ? { signals } : {}),
     metadata,
   };
+}
+
+function normalizePhysicalProfile(
+  input: unknown
+): NonNullable<CoachPlan["physicalProfile"]> | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const raw = input as Record<string, unknown>;
+  const sex = raw.sex === "male" || raw.sex === "female" ? raw.sex : undefined;
+  const ageYears = clampRange(toNumber(raw.ageYears), 12, 100);
+  const heightCm = clampRange(toNumber(raw.heightCm), 120, 230);
+  const weightKg = clampRange(toNumber(raw.weightKg), 35, 250);
+  const bodyFatPct = clampRange(toNumber(raw.bodyFatPct), 3, 70);
+  const activityLevel =
+    raw.activityLevel === "sedentary" ||
+    raw.activityLevel === "light" ||
+    raw.activityLevel === "moderate" ||
+    raw.activityLevel === "very"
+      ? raw.activityLevel
+      : undefined;
+  const out: NonNullable<CoachPlan["physicalProfile"]> = {};
+  if (sex) out.sex = sex;
+  if (ageYears !== undefined) out.ageYears = ageYears;
+  if (heightCm !== undefined) out.heightCm = heightCm;
+  if (weightKg !== undefined) out.weightKg = weightKg;
+  if (bodyFatPct !== undefined) out.bodyFatPct = bodyFatPct;
+  if (activityLevel) out.activityLevel = activityLevel;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function normalizeCognitiveProfile(
@@ -197,6 +247,47 @@ function normalizeWeeklyPlan(input: unknown): CoachPlan["weeklyPlan"] | undefine
   return { weekStartISO, content, generatedAtISO };
 }
 
+function normalizeSignals(input: unknown): CoachPlan["signals"] | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const raw = input as Record<string, unknown>;
+  const todayRaw =
+    raw.today && typeof raw.today === "object" ? (raw.today as Record<string, unknown>) : null;
+  if (!todayRaw) return undefined;
+
+  const dateISO = typeof todayRaw.dateISO === "string" ? todayRaw.dateISO : "";
+  if (!dateISO) return undefined;
+
+  const intakeKcal = clampRange(toNumber(todayRaw.intakeKcal), 0, 12000);
+  const burnKcal = clampRange(toNumber(todayRaw.burnKcal), 0, 8000);
+  const weightKg = clampRange(toNumber(todayRaw.weightKg), 35, 250);
+  const activityMinutes = clampRange(toNumber(todayRaw.activityMinutes), 0, 1440);
+
+  const foods = Array.isArray(todayRaw.foods)
+    ? todayRaw.foods
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+  const activities = Array.isArray(todayRaw.activities)
+    ? todayRaw.activities
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+
+  return {
+    today: {
+      dateISO,
+      ...(intakeKcal !== undefined ? { intakeKcal } : {}),
+      ...(burnKcal !== undefined ? { burnKcal } : {}),
+      ...(weightKg !== undefined ? { weightKg } : {}),
+      ...(activityMinutes !== undefined ? { activityMinutes } : {}),
+      ...(foods.length > 0 ? { foods } : {}),
+      ...(activities.length > 0 ? { activities } : {}),
+    },
+  };
+}
+
 function normalizeMetadata(input: unknown): CoachPlan["metadata"] {
   if (!input || typeof input !== "object") return { version: DEFAULT_VERSION };
   const raw = input as Record<string, unknown>;
@@ -205,6 +296,10 @@ function normalizeMetadata(input: unknown): CoachPlan["metadata"] {
 }
 
 function mergeCoachPlan(current: CoachPlan, partial: Partial<CoachPlan>): CoachPlan {
+  const physicalProfile = {
+    ...(current.physicalProfile ?? {}),
+    ...(partial.physicalProfile ?? {}),
+  };
   const cognitiveProfile = {
     ...(current.cognitiveProfile ?? DEFAULT_COGNITIVE_PROFILE),
     ...(partial.cognitiveProfile ?? {}),
@@ -218,17 +313,43 @@ function mergeCoachPlan(current: CoachPlan, partial: Partial<CoachPlan>): CoachP
     ...(partial.preferences ?? {}),
   };
   const weeklyPlan = partial.weeklyPlan ?? current.weeklyPlan;
+  const currentToday = current.signals?.today;
+  const patchToday = partial.signals?.today;
+  const signals =
+    currentToday || patchToday
+      ? {
+          today:
+            currentToday || patchToday
+              ? {
+                  ...(currentToday ?? {}),
+                  ...(patchToday ?? {}),
+                  foods: mergeStringArrays(currentToday?.foods, patchToday?.foods),
+                  activities: mergeStringArrays(currentToday?.activities, patchToday?.activities),
+                }
+              : undefined,
+        }
+      : undefined;
   const metadata = {
     ...current.metadata,
     ...(partial.metadata ?? {}),
   };
   return {
+    ...(Object.keys(physicalProfile).length > 0 ? { physicalProfile } : {}),
     cognitiveProfile,
     goals,
     preferences,
     ...(weeklyPlan ? { weeklyPlan } : {}),
+    ...(signals?.today ? { signals } : {}),
     metadata,
   };
+}
+
+function mergeStringArrays(a?: string[], b?: string[]): string[] | undefined {
+  const merged = [...(a ?? []), ...(b ?? [])]
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (merged.length === 0) return undefined;
+  return Array.from(new Set(merged)).slice(-12);
 }
 
 function toNumber(input: unknown): number | undefined {
@@ -243,4 +364,10 @@ function toNumber(input: unknown): number | undefined {
 function clampScore(input: number): number {
   if (!Number.isFinite(input)) return 0;
   return Math.max(0, Math.round(input));
+}
+
+function clampRange(input: number | undefined, min: number, max: number): number | undefined {
+  if (input === undefined || !Number.isFinite(input)) return undefined;
+  if (input < min || input > max) return undefined;
+  return Math.round(input * 10) / 10;
 }

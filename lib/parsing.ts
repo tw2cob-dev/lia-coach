@@ -4,7 +4,7 @@ type MessageType = "food" | "training" | "weight" | "unknown";
 export function classifyMessage(text: string): MessageType {
   const trimmed = text.trim();
   if (!trimmed) return "unknown";
-  const lower = trimmed.toLowerCase();
+  const lower = normalize(trimmed);
 
   const weightKeywords = ["peso", "kg", "kilo", "kilos", "kilogramo", "kilogramos", "weigh", "weight"];
   const trainingKeywords = [
@@ -18,10 +18,24 @@ export function classifyMessage(text: string): MessageType {
     "fuerza",
     "pesas",
     "tenis",
+    "caminar",
+    "caminado",
+    "camine",
+    "paseo",
+    "andar",
   ];
   const foodKeywords = [
     "comida",
     "comer",
+    "comi",
+    "comido",
+    "he comido",
+    "ceno",
+    "cenado",
+    "almorce",
+    "almorzado",
+    "desayune",
+    "desayunado",
     "desayuno",
     "almuerzo",
     "cena",
@@ -44,12 +58,33 @@ export function classifyMessage(text: string): MessageType {
 export function extractWeight(text: string): number | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
+  const lower = normalize(trimmed);
 
-  const match = lower.match(/\b(\d{2,3}(?:[.,]\d+)?)\s*(kg|kilo|kilos|kilogramo|kilogramos)?\b/);
+  // Prefer explicit "peso" mentions first.
+  const explicit = lower.match(
+    /\bpeso(?:\s*(?:actual|hoy|de)?)?\s*[:=]?\s*(\d{2,3}(?:[.,]\d+)?)\s*(kg|kgs|kilo|kilos|kilogramo|kilogramos)\b/
+  );
+  if (explicit) {
+    const value = Number(explicit[1].replace(",", "."));
+    if (Number.isFinite(value) && value >= 35 && value <= 250) return value;
+  }
+
+  // Generic weight extraction requires a weight unit to avoid false positives (e.g. "120 gr").
+  const match = lower.match(
+    /\b(\d{2,3}(?:[.,]\d+)?)\s*(kg|kgs|kilo|kilos|kilogramo|kilogramos)\b/
+  );
   if (!match) return null;
-  const raw = match[1].replace(",", ".");
-  const value = Number(raw);
+  const value = Number(match[1].replace(",", "."));
   if (!Number.isFinite(value)) return null;
+  if (value < 35 || value > 250) return null;
   return value;
+}
+
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }

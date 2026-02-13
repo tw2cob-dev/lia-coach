@@ -12,6 +12,8 @@ const assert = require("node:assert/strict");
 const { getCoachPlan } = require("../lib/coachPlan.ts");
 const { buildAIContext } = require("../lib/aiContext.ts");
 const { detectCoachIntent } = require("../lib/chat/coachIntent.ts");
+const { classifyMessage, extractWeight } = require("../lib/parsing.ts");
+const { buildDashboardMetrics } = require("../lib/chat/dashboardMetrics.ts");
 const { __test__ } = require("../lib/chat/chatLogic.ts");
 const { COACH_SYSTEM_PROMPT } = require("../lib/prompts/coachPrompt.ts");
 
@@ -66,6 +68,12 @@ test("localStorage access is safe during SSR (no window)", () => {
 test("coach prompt is injected only when intent is true", () => {
   const context = buildAIContext([]);
   const plan = {
+    cognitiveProfile: {
+      nivel_tecnico: "basico",
+      score_tecnico: 0,
+      estilo: "neutral",
+      preferencia_detalle: "medio",
+    },
     goals: {},
     preferences: { language: "es", tone: "concise" },
     metadata: { version: 1 },
@@ -80,5 +88,117 @@ test("coach prompt is injected only when intent is true", () => {
     ? __test__.buildCoachContext(plan, context, "plan semanal")
     : "";
   assert.equal(coachContext.includes(COACH_SYSTEM_PROMPT), true);
-  assert.equal(coachContext.includes("CoachPlan:"), true);
+  assert.equal(coachContext.includes("CoachPlan:"), false);
+});
+
+test("fallback prioritizes weight-loss intent over greeting", () => {
+  const plan = {
+    cognitiveProfile: {
+      nivel_tecnico: "basico",
+      score_tecnico: 0,
+      estilo: "neutral",
+      preferencia_detalle: "medio",
+    },
+    goals: {},
+    preferences: { language: "es", tone: "concise" },
+    metadata: { version: 1 },
+  };
+  const response = __test__.buildCoachFallbackResponse(
+    "hola lia, quiero perder peso",
+    plan,
+    "Bryan"
+  );
+  assert.equal(response.includes("Objetivo: perder peso"), true);
+});
+
+test("fallback answers protein timing why-question", () => {
+  const plan = {
+    cognitiveProfile: {
+      nivel_tecnico: "basico",
+      score_tecnico: 0,
+      estilo: "neutral",
+      preferencia_detalle: "medio",
+    },
+    goals: {},
+    preferences: { language: "es", tone: "concise" },
+    metadata: { version: 1 },
+  };
+  const response = __test__.buildCoachFallbackResponse(
+    "porque deberia tomar 3 o 4 tomas de proteina?",
+    plan,
+    "Bryan"
+  );
+  assert.equal(response.toLowerCase().includes("proteina"), true);
+  assert.equal(response.toLowerCase().includes("3-4"), true);
+});
+
+test("parsing classifies common diary messages and avoids false weight extraction", () => {
+  assert.equal(classifyMessage("he comido pasta y carne"), "food");
+  assert.equal(classifyMessage("he caminado 30 min"), "training");
+  assert.equal(extractWeight("120 gr de pasta"), null);
+  assert.equal(extractWeight("peso 91 kg"), 91);
+});
+
+test("dashboard metrics infer profile from enumerated input and update daily summary", () => {
+  const now = new Date("2026-02-13T12:00:00.000Z");
+  const start = now.getTime();
+  const events = [
+    {
+      type: "text",
+      role: "user",
+      id: "u1",
+      ts: start - 60_000,
+      text: "hoy he comido pasta, 120 gr sin cocer, y 200 gramos de secreto iberico",
+    },
+    {
+      type: "text",
+      role: "user",
+      id: "u2",
+      ts: start - 30_000,
+      text: "he caminado unos 30 min aparte de eso no he hecho nada",
+    },
+    {
+      type: "text",
+      role: "user",
+      id: "u3",
+      ts: start,
+      text: "1 hombre, 2 31, 3 1,65 m, 4 91kgs, 5 trabajo sedentario pero hago tenis 2 veces por semana",
+    },
+  ];
+
+  const metrics = buildDashboardMetrics(events, null, now);
+  assert.equal(metrics.daily.targetKcal !== null, true);
+  assert.equal(metrics.daily.burnKcal > 0, true);
+  assert.equal(metrics.daily.intakeKcal > 0, true);
+  assert.equal(metrics.daily.lastWeightKg, 91);
+});
+
+test("dashboard metrics prioritize AI memory signals for today", () => {
+  const now = new Date("2026-02-13T12:00:00.000Z");
+  const events = [
+    {
+      type: "text",
+      role: "user",
+      id: "u1",
+      ts: now.getTime() - 60_000,
+      text: "hoy comi normal",
+    },
+  ];
+  const plan = {
+    goals: {},
+    preferences: { language: "es", tone: "concise" },
+    metadata: { version: 1 },
+    signals: {
+      today: {
+        dateISO: "2026-02-13",
+        intakeKcal: 2100,
+        burnKcal: 320,
+        weightKg: 90.5,
+      },
+    },
+  };
+  const metrics = buildDashboardMetrics(events, plan, now);
+  assert.equal(metrics.daily.intakeKcal, 2100);
+  assert.equal(metrics.daily.burnKcal, 320);
+  assert.equal(metrics.daily.lastWeightKg, 90.5);
 });

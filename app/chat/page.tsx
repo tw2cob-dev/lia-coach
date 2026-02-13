@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { onAuthStateChanged, signOut as firebaseSignOut } from "firebase/auth";
@@ -13,7 +13,11 @@ import {
   createUserVoiceEvent,
 } from "../../lib/chatEvents";
 import { streamAssistantReplyForFile, streamAssistantReplyText } from "../../lib/chat/chatLogic";
+import { AIReplyDebug } from "../../lib/aiClient";
+import { extractMemoryPatch } from "../../lib/aiMemoryClient";
+import { buildDashboardMetrics } from "../../lib/chat/dashboardMetrics";
 import { LIA_WELCOME_MESSAGE } from "../../lib/chat/welcomeMessage";
+import { CoachPlan, getCoachPlan, upsertCoachPlan } from "../../lib/coachPlan";
 import { getFirebaseAuth } from "../../lib/firebase/client";
 
 const CHAT_STORAGE_PREFIX = "lia-chat-events";
@@ -25,6 +29,7 @@ const MAX_TEXTAREA_HEIGHT_PX = 168;
 const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
 const MAX_SELECTED_FILES = 3;
+const THEME_STORAGE_KEY = "lia-theme-preference";
 
 const DAILY_TOKEN_BUDGET = 20000;
 const DAILY_MESSAGE_BUDGET = 50;
@@ -69,6 +74,10 @@ type AuthUser = {
   isSuperAdmin?: boolean;
 };
 
+type ThemePreference = "light" | "dark" | "system";
+type SummaryCardKey = "food" | "activity" | "weight";
+type SummaryCardMode = "value" | "chart";
+
 function isSelectedFileEvent(
   event: ChatEvent,
   selectedIds: string[]
@@ -88,13 +97,25 @@ export default function ChatPage() {
   const [pendingNote, setPendingNote] = useState("");
   const [expandedSummaries, setExpandedSummaries] = useState<Record<string, boolean>>({});
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [summaryMode, setSummaryMode] = useState<"daily" | "weekly">("daily");
+  const [summaryCardModes, setSummaryCardModes] = useState<Record<SummaryCardKey, SummaryCardMode>>({
+    food: "value",
+    activity: "value",
+    weight: "value",
+  });
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [lastAIDebug, setLastAIDebug] = useState<AIReplyDebug | null>(null);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [hasHydrated, setHasHydrated] = useState(false);
   const activeUserId = authUser?.id ?? "anon";
   const activeChatStorageKey = getChatStorageKey(activeUserId);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const profilePanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -157,10 +178,57 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    setHasHydrated(true);
+  }, []);
+
+  useEffect(() => {
     if (!isStreaming) {
       inputRef.current?.focus();
     }
   }, [isStreaming]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark" || stored === "system") {
+      setThemePreference(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = (pref: ThemePreference) => {
+      const resolved = pref === "system" ? (media.matches ? "dark" : "light") : pref;
+      document.documentElement.setAttribute("data-theme", resolved);
+      window.localStorage.setItem(THEME_STORAGE_KEY, pref);
+    };
+
+    applyTheme(themePreference);
+    const listener = () => {
+      if (themePreference !== "system") return;
+      applyTheme("system");
+    };
+    media.addEventListener("change", listener);
+    return () => media.removeEventListener("change", listener);
+  }, [themePreference]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!profilePanelRef.current) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (profilePanelRef.current.contains(target)) return;
+      setIsProfileOpen(false);
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsProfileOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, []);
 
   useEffect(() => {
     if (!authUser?.id) {
@@ -359,6 +427,7 @@ export default function ChatPage() {
     const withUser = [...events, userEvent];
     setEvents(withUser);
     persistEvents(withUser);
+    await captureMemoryPatch(userEvent);
 
     setIsStreaming(true);
     setStreamingText("");
@@ -371,7 +440,8 @@ export default function ChatPage() {
         },
         turnId,
         selectedFileIds,
-        authUser?.name
+        authUser?.name,
+        (debug) => setLastAIDebug(debug)
       );
 
       reconcileBudget(reservation.reservedOut, getEventText(assistantEvent));
@@ -385,12 +455,45 @@ export default function ChatPage() {
         persistEvents(next);
         return next;
       });
+      syncSignalsFromAssistantReply(getEventText(assistantEvent));
 
       return true;
     } finally {
       setIsStreaming(false);
       setStreamingText("");
     }
+  };
+
+  const captureMemoryPatch = async (event: ChatEvent) => {
+    if (event.role !== "user") return;
+    const text =
+      event.type === "text"
+        ? event.text
+        : event.type === "voice"
+        ? event.content
+        : event.content;
+    if (!text.trim()) return;
+
+    const patch = await extractMemoryPatch({
+      message: text,
+      profile: getCoachPlan()?.physicalProfile,
+      todayISO: getLocalDateKey(),
+    });
+    if (!patch) return;
+    upsertCoachPlan(patch);
+  };
+  const syncSignalsFromAssistantReply = (text: string) => {
+    const intakeKcal = extractAssistantIntakeKcal(text);
+    if (intakeKcal === null) return;
+    const patch: Partial<CoachPlan> = {
+      signals: {
+        today: {
+          dateISO: getLocalDateKey(),
+          intakeKcal,
+        },
+      },
+    };
+    upsertCoachPlan(patch);
   };
     const sendPendingAttachment = async () => {
     if (!pendingAttachment) return false;
@@ -438,6 +541,7 @@ export default function ChatPage() {
         onToken: (chunk) => setStreamingText((prev) => prev + chunk),
         selectedFileIds,
         userName: authUser?.name,
+        onDebug: (debug) => setLastAIDebug(debug),
       });
 
       reconcileBudget(reservation.reservedOut, getEventText(assistantEvent));
@@ -451,6 +555,7 @@ export default function ChatPage() {
         persistEvents(next);
         return next;
       });
+      syncSignalsFromAssistantReply(getEventText(assistantEvent));
 
       return true;
     } finally {
@@ -599,17 +704,6 @@ export default function ChatPage() {
     await sendEvent(userEvent);
   };
 
-  const handleQuickPrompt = (prompt: string) => {
-    if (pendingAttachment || isStreaming) return;
-    setInput(prompt);
-    requestAnimationFrame(() => {
-      if (!inputRef.current) return;
-      inputRef.current.focus();
-      inputRef.current.setSelectionRange(prompt.length, prompt.length);
-      adjustTextareaHeight();
-    });
-  };
-
   const handleLogout = () => {
     const auth = getFirebaseAuth();
     void firebaseSignOut(auth)
@@ -654,11 +748,96 @@ export default function ChatPage() {
   const selectedFiles = events.filter((event) => isSelectedFileEvent(event, selectedFileIds));
   const dateLabel = buildDateLabel();
   const welcomeMessage = LIA_WELCOME_MESSAGE;
+  const coachPlan = hasHydrated ? getCoachPlan() : null;
+  const dashboardMetrics = useMemo(() => buildDashboardMetrics(events, coachPlan), [events, coachPlan]);
+  const summaryCopy =
+    summaryMode === "daily"
+      ? "Sin juicio. Sin castigo. Balance de hoy."
+      : "Sin juicio. Sin castigo. Balance de esta semana.";
+  const summaryItems = useMemo(
+    () =>
+    summaryMode === "daily"
+      ? [
+          {
+            key: "food" as const,
+            label: "Comidas",
+            value:
+              dashboardMetrics.daily.targetKcal !== null
+                ? `${dashboardMetrics.daily.intakeKcal} / ${dashboardMetrics.daily.targetKcal} kcal`
+                : "Sin datos",
+            chart: dashboardMetrics.weekly.intakeKcal,
+            hint:
+              dashboardMetrics.daily.targetKcal !== null
+                ? `TMB ${dashboardMetrics.daily.basalKcal} · GET ${dashboardMetrics.daily.tdeeKcal} · conf. ${dashboardMetrics.daily.confidence}`
+                : "Comparte peso, altura, edad, sexo o actividad para calcular objetivo.",
+          },
+          {
+            key: "activity" as const,
+            label: "Actividad",
+            value: `${dashboardMetrics.daily.burnKcal} kcal`,
+            chart: dashboardMetrics.weekly.burnKcal,
+            hint: "Incluye sesiones registradas y recurrentes.",
+          },
+          {
+            key: "weight" as const,
+            label: "Peso",
+            value:
+              dashboardMetrics.daily.lastWeightKg !== null
+                ? `${dashboardMetrics.daily.lastWeightKg} kg`
+                : "Sin registro",
+            chart: dashboardMetrics.weekly.weightKg.map((value) => value ?? 0),
+            hint:
+              dashboardMetrics.daily.weightDeltaKg30d !== null
+                ? `Progreso 30d: ${dashboardMetrics.daily.weightDeltaKg30d > 0 ? "+" : ""}${dashboardMetrics.daily.weightDeltaKg30d} kg`
+                : "Aún sin progreso calculable",
+          },
+        ]
+      : [
+          {
+            key: "food" as const,
+            label: "Comidas",
+            value:
+              dashboardMetrics.daily.targetKcal !== null
+                ? `${sumSeries(dashboardMetrics.weekly.intakeKcal)} / ${dashboardMetrics.daily.targetKcal * 7} kcal sem`
+                : "Sin datos",
+            chart: dashboardMetrics.weekly.intakeKcal,
+            hint: "Consumo semanal acumulado.",
+          },
+          {
+            key: "activity" as const,
+            label: "Actividad",
+            value: `${sumSeries(dashboardMetrics.weekly.burnKcal)} kcal sem`,
+            chart: dashboardMetrics.weekly.burnKcal,
+            hint: "Gasto por ejercicio semanal.",
+          },
+          {
+            key: "weight" as const,
+            label: "Peso",
+            value:
+              dashboardMetrics.daily.lastWeightKg !== null
+                ? `${dashboardMetrics.daily.lastWeightKg} kg actual`
+                : "Sin registro",
+            chart: dashboardMetrics.weekly.weightKg.map((value) => value ?? 0),
+            hint:
+              dashboardMetrics.daily.weightDeltaKg30d !== null
+                ? `Delta 30d: ${dashboardMetrics.daily.weightDeltaKg30d > 0 ? "+" : ""}${dashboardMetrics.daily.weightDeltaKg30d} kg`
+                : "Sin delta",
+          },
+        ],
+    [dashboardMetrics, summaryMode]
+  );
+
+  const toggleSummaryCardMode = (key: SummaryCardKey) => {
+    setSummaryCardModes((prev) => ({
+      ...prev,
+      [key]: prev[key] === "value" ? "chart" : "value",
+    }));
+  };
 
   return (
-    <div className="app-bg min-h-screen text-slate-900">
-      <div className="mx-auto flex min-h-screen max-w-[440px] flex-col px-5 pb-8 pt-6">
-        <header className="flex items-center justify-between">
+    <div className="app-bg h-[100dvh] overflow-hidden text-slate-900">
+      <div className="mx-auto flex h-full max-w-[440px] flex-col overflow-hidden px-5 pb-4 pt-6">
+        <header className="shrink-0 flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">LIA Coach</p>
             <h1 className="font-display text-2xl font-medium text-slate-900">Hoy {dateLabel}</h1>
@@ -666,86 +845,208 @@ export default function ChatPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="soft-pill rounded-full px-3 py-1 text-xs font-semibold text-slate-700"
+              className="soft-pill pro-pill rounded-full px-3 py-1 text-xs font-semibold text-slate-700"
             >
               Plan Pro
             </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-white/70 shadow-sm"
-              aria-label="Perfil"
-            >
-              <span className="text-sm font-semibold text-slate-700">
-                {authUser?.name?.charAt(0)?.toUpperCase() || "L"}
-              </span>
-            </button>
+            <div className="relative" ref={profilePanelRef}>
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen((prev) => !prev)}
+                className="avatar-btn flex h-10 w-10 items-center justify-center rounded-full bg-white/70 shadow-sm"
+                aria-label="Perfil"
+                aria-expanded={isProfileOpen}
+                aria-haspopup="dialog"
+              >
+                <span className="text-sm font-semibold text-slate-700">
+                  {authUser?.name?.charAt(0)?.toUpperCase() || "L"}
+                </span>
+              </button>
+              {isProfileOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Perfil de usuario"
+                  className="profile-panel absolute right-0 top-12 z-30 w-72 rounded-2xl border border-white/70 bg-white/95 p-4 shadow-xl backdrop-blur"
+                >
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Perfil</p>
+                  <div className="mt-3 space-y-2 text-sm text-slate-700">
+                    <p>
+                      <span className="text-slate-500">Nombre: </span>
+                      {authUser?.name || "Sin nombre"}
+                    </p>
+                    <p>
+                      <span className="text-slate-500">Email: </span>
+                      {authUser?.email || "Sin email"}
+                    </p>
+                    <p>
+                      <span className="text-slate-500">ID: </span>
+                      <span className="break-all">{authUser?.id || "-"}</span>
+                    </p>
+                  </div>
+
+                  <div className="mt-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Tema</p>
+                    <div className="mt-2 inline-flex rounded-full bg-slate-100 p-1 text-[11px] font-semibold">
+                      {([
+                        { id: "light", label: "Claro" },
+                        { id: "dark", label: "Oscuro" },
+                        { id: "system", label: "Sistema" },
+                      ] as const).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setThemePreference(item.id)}
+                          className={`rounded-full px-3 py-1 transition ${
+                            themePreference === item.id
+                              ? "bg-slate-900 text-white"
+                              : "text-slate-600"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="mt-4 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700"
+                  >
+                    Cerrar sesión
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
-        <section className="glass-card mt-5 rounded-3xl p-4">
+        <section className="glass-card summary-card mt-5 shrink-0 rounded-3xl p-4">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Resumen rapido</p>
-              <p className="mt-2 text-sm text-slate-700">
-                Sin juicio. Sin castigo. Solo contexto para hoy.
-              </p>
+              <p className="mt-2 text-sm text-slate-700">{summaryCopy}</p>
             </div>
-            <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-semibold text-slate-600">
-              Diario
-            </span>
+            <div className="summary-switch inline-flex rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm">
+              <button
+                type="button"
+                onClick={() => setSummaryMode("daily")}
+                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
+                  summaryMode === "daily" ? "is-active bg-slate-900 text-white" : "text-slate-600"
+                }`}
+              >
+                Diario
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryMode("weekly")}
+                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
+                  summaryMode === "weekly" ? "is-active bg-slate-900 text-white" : "text-slate-600"
+                }`}
+              >
+                Semanal
+              </button>
+            </div>
           </div>
           <div className="mt-4 grid grid-cols-3 gap-3">
-            {[
-              { label: "Comidas", value: "Sin datos" },
-              { label: "Actividad", value: "Pendiente" },
-              { label: "Peso", value: "Opcional" },
-            ].map((item) => (
-              <div key={item.label} className="rounded-2xl bg-white/70 p-3 text-xs">
+            {summaryItems.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => toggleSummaryCardMode(item.key)}
+                className="summary-metric rounded-2xl bg-white/70 p-3 text-left text-xs"
+              >
                 <p className="text-slate-400">{item.label}</p>
-                <p className="mt-2 text-sm font-semibold text-slate-800">{item.value}</p>
-              </div>
+                {summaryCardModes[item.key] === "value" ? (
+                  <p className="mt-2 text-sm font-semibold text-slate-800">{item.value}</p>
+                ) : (
+                  <div className="mt-2">
+                    <MiniBarChart values={item.chart} />
+                  </div>
+                )}
+                <p className="mt-1 text-[10px] text-slate-500">{item.hint}</p>
+              </button>
             ))}
           </div>
         </section>
 
-        <section className="glass-card mt-5 flex min-h-[320px] flex-1 flex-col rounded-3xl p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Conversacion</p>
-            <div className="flex items-center gap-3">
-              {authUser?.isSuperAdmin && (
-                <button
-                  type="button"
-                  className="text-xs font-semibold text-rose-600"
-                  onClick={handleResetChat}
-                  disabled={isStreaming}
-                >
-                  Reset chat
-                </button>
-              )}
+        <section className="glass-card chat-card mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-2">
+          {authUser?.isSuperAdmin && (
+            <div className="flex justify-end gap-3">
               <button
                 type="button"
-                className="text-xs font-medium text-slate-500"
-                onClick={() => handleQuickPrompt("Cierre de dia: ")}
+                className="text-xs font-semibold text-slate-600"
+                onClick={() => setIsDebugOpen((prev) => !prev)}
               >
-                Cierre de dia
+                {isDebugOpen ? "Ocultar debug" : "Ver debug IA"}
+              </button>
+              <button
+                type="button"
+                className="text-xs font-semibold text-rose-600"
+                onClick={handleResetChat}
+                disabled={isStreaming}
+              >
+                Reset chat
               </button>
             </div>
-          </div>
+          )}
+          {authUser?.isSuperAdmin && isDebugOpen && (
+            <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
+              <p className="font-semibold text-slate-900">Debug IA</p>
+              {!lastAIDebug ? (
+                <p className="mt-2 text-slate-500">Sin datos aún. Envía un mensaje.</p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  <p>
+                    <span className="font-semibold">Fuente:</span> {lastAIDebug.source}
+                    {lastAIDebug.reason ? ` (${lastAIDebug.reason})` : ""}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Modelo:</span> {lastAIDebug.model ?? "-"} |{" "}
+                    <span className="font-semibold">Temp:</span> {lastAIDebug.temperature ?? "-"} |{" "}
+                    <span className="font-semibold">Max tokens:</span> {lastAIDebug.maxTokens ?? "-"} |{" "}
+                    <span className="font-semibold">Finish:</span> {lastAIDebug.finishReason ?? "-"}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Mensajes:</span> {lastAIDebug.messagesCount ?? "-"} |{" "}
+                    <span className="font-semibold">Uso total:</span>{" "}
+                    {lastAIDebug.usage?.total_tokens ?? "-"}
+                  </p>
+                  {lastAIDebug.lastUserMessage ? (
+                    <p className="whitespace-pre-wrap">
+                      <span className="font-semibold">Ultimo user:</span> {lastAIDebug.lastUserMessage}
+                    </p>
+                  ) : null}
+                  {lastAIDebug.systemContent ? (
+                    <details>
+                      <summary className="cursor-pointer font-semibold">Ver prompt/contexto</summary>
+                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-900/90 p-2 text-[10px] text-slate-100">
+                        {lastAIDebug.systemContent}
+                      </pre>
+                    </details>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          )}
 
           <main
             ref={scrollRef}
             onScroll={handleScroll}
-            className="mt-3 flex-1 overflow-y-auto pr-1"
+            className="chat-scroll mt-2 min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           >
-            <ul className="space-y-3 pb-4">
-              <li className="max-w-[85%] rounded-2xl border border-slate-200/80 bg-slate-50/85 px-4 py-3 text-sm text-slate-800 shadow-sm">
+            <ul className="message-list px-2 pb-4">
+              <li className="message-row">
+                <div className="message-item welcome-bubble w-full max-w-none px-2 py-2 text-sm">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                   Bienvenida
                 </p>
                 <p className="mt-1 whitespace-pre-line">{welcomeMessage}</p>
+                </div>
               </li>
-              {events.map((message) => {
+              {events.map((message, messageIndex) => {
+                const previousMessage = messageIndex > 0 ? events[messageIndex - 1] : null;
+                const followsUser = previousMessage?.role === "user";
                 const isVoice = message.type === "voice";
                 const isImage = message.type === "image";
                 const isFile = message.type === "file";
@@ -766,12 +1067,17 @@ export default function ChatPage() {
                 return (
                   <li
                     key={message.id}
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm transition ${
-                      message.role === "user"
-                        ? "ml-auto bg-slate-900 text-white"
-                        : "bg-white/80 text-slate-900"
-                    } ${isSelected ? "ring-1 ring-slate-200" : ""}`}
+                    className={`message-row ${message.role === "user" ? "user-row" : ""} ${
+                      followsUser ? "follows-user-row" : ""
+                    }`}
                   >
+                    <div
+                      className={`message-item px-2 py-2 text-sm transition ${
+                        message.role === "user"
+                          ? "user-bubble ml-auto max-w-[85%]"
+                          : "assistant-bubble w-full max-w-none"
+                      } ${isSelected ? "ring-1 ring-slate-200" : ""}`}
+                    >
                     {isImage && message.image?.src && (
                       <Image
                         src={message.image.src}
@@ -848,13 +1154,32 @@ export default function ChatPage() {
                         )}
                       </div>
                     )}
-                    {content}
+                    {content ? (
+                      <p className="whitespace-pre-wrap leading-relaxed">
+                        {renderFormattedText(content)}
+                      </p>
+                    ) : null}
+                    </div>
                   </li>
                 );
               })}
               {isStreaming && (
-                <li className="max-w-[85%] rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate-900 shadow-sm">
-                  {streamingText ? streamingText : "Escribiendo..."}
+                <li
+                  className={`message-row ${
+                    events.length > 0 && events[events.length - 1]?.role === "user"
+                      ? "follows-user-row"
+                      : ""
+                  }`}
+                >
+                  <div className="message-item assistant-bubble w-full max-w-none px-2 py-2 text-sm">
+                  {streamingText ? (
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {renderFormattedText(streamingText)}
+                    </p>
+                  ) : (
+                    "Escribiendo..."
+                  )}
+                  </div>
                 </li>
               )}
             </ul>
@@ -865,10 +1190,10 @@ export default function ChatPage() {
               event.preventDefault();
               void handleSubmit();
             }}
-            className="mt-4 border-t border-white/70 pt-4"
+            className="composer-wrap mt-2 border-t border-white/70 pt-2"
           >
             {selectedFileIds.length > 0 && (
-              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
+              <div className="composer-chip mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
               <span className="font-medium">Archivos seleccionados: {selectedFileIds.length}</span>
               {selectedFiles.slice(0, MAX_SELECTED_FILES).map((file) => (
                 <span key={file.id} className="rounded-full bg-white px-3 py-1 shadow-sm">
@@ -906,7 +1231,7 @@ export default function ChatPage() {
               </div>
             )}
             {pendingAttachment && (
-              <div className="mb-3 flex items-center gap-3 rounded-2xl bg-white/75 p-3 shadow-sm">
+              <div className="composer-chip mb-3 flex items-center gap-3 rounded-2xl bg-white/75 p-3 shadow-sm">
               {pendingAttachment.type === "image" ? (
                 <Image
                   src={pendingAttachment.src}
@@ -946,11 +1271,11 @@ export default function ChatPage() {
               </div>
             )}
 
-            <div className="flex items-end gap-2 rounded-2xl border border-white/70 bg-white/70 p-2 shadow-sm">
+            <div className="composer-shell flex items-end gap-2 rounded-2xl border border-white/70 bg-white/70 p-2 shadow-sm">
               <button
                 type="button"
                 onClick={() => attachInputRef.current?.click()}
-                className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-600 shadow-sm"
+                className="composer-icon-btn flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-600 shadow-sm"
                 disabled={isStreaming}
                 aria-label="Adjuntar"
               >
@@ -961,7 +1286,7 @@ export default function ChatPage() {
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Escribe aqui..."
+                placeholder="Escribe aquí..."
                 className="max-h-[168px] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-800 outline-none"
                 rows={1}
                 disabled={isStreaming}
@@ -969,7 +1294,7 @@ export default function ChatPage() {
               <button
                 type="button"
                 onClick={handleVoiceToggle}
-                className={`flex h-10 w-10 items-center justify-center rounded-xl border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
+                className={`composer-icon-btn flex h-10 w-10 items-center justify-center rounded-xl border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
                   isRecording ? "ring-2 ring-red-300 text-red-500" : ""
                 }`}
                 disabled={isStreaming}
@@ -997,7 +1322,7 @@ export default function ChatPage() {
               </button>
               <button
                 type="submit"
-                className="cta-gradient flex h-10 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white shadow-sm"
+                className="composer-send-btn cta-gradient flex h-10 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white shadow-sm"
                 disabled={isStreaming}
               >
                 Enviar
@@ -1064,6 +1389,45 @@ function readImageDimensions(src: string): Promise<{ width?: number; height?: nu
 function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 1)}...`;
+}
+
+function renderFormattedText(text: string): ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <strong key={`bold-${index}`} className="font-semibold">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={`txt-${index}`}>{part}</span>;
+  });
+}
+
+function sumSeries(values: number[]): number {
+  return values.reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+function MiniBarChart({ values }: { values: number[] }) {
+  const max = Math.max(1, ...values.map((value) => Math.max(0, value)));
+  return (
+    <div className="flex h-10 items-end gap-1">
+      {values.map((value, index) => {
+        const safe = Math.max(0, value);
+        const ratio = safe / max;
+        const height = Math.max(4, Math.round(ratio * 34));
+        return (
+          <span
+            key={`bar-${index}`}
+            className="w-2 rounded bg-slate-400/70"
+            style={{ height: `${height}px` }}
+            aria-hidden="true"
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 
@@ -1147,10 +1511,10 @@ function buildBudgetNotice(state: BudgetState, reason: "tokens" | "messages" | "
   const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
   const reasonLine =
     reason === "tokens"
-      ? "Has alcanzado el limite diario de tokens."
+      ? "Has alcanzado el límite diario de tokens."
       : reason === "messages"
-      ? "Has alcanzado el limite diario de mensajes."
-      : "Has alcanzado el limite diario de coste.";
+      ? "Has alcanzado el límite diario de mensajes."
+      : "Has alcanzado el límite diario de coste.";
   return `${reasonLine} ${tokensLine}. ${messagesLine}. ${costLine}.`;
 }
 
@@ -1167,6 +1531,40 @@ function buildBudgetWarning(state: BudgetState) {
   const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
   return `Aviso: has superado $${DAILY_COST_WARNING.toFixed(2)} de coste estimado hoy. ${costLine}.`;
 }
+
+function extractAssistantIntakeKcal(text: string): number | null {
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!/kcal|calorias?|caloria/.test(normalized)) return null;
+
+  // Skip ranges like "1800-2000" or "1800 a 2000".
+  if (/\b\d{2,4}\s*(?:-|a)\s*\d{2,4}\s*(kcal|calorias?|caloria)\b/.test(normalized)) return null;
+
+  const labelNoUnit = normalized.match(
+    /\b(?:calorias?\s+consumidas?|consumo|ingesta(?:\s+total)?)\s*[:=]?\s*(\d{2,4})\b/
+  );
+  if (labelNoUnit) {
+    const value = Number(labelNoUnit[1]);
+    if (Number.isFinite(value) && value >= 200 && value <= 8000) return value;
+  }
+
+  const targeted = normalized.match(
+    /\b(?:total|ingesta|consumo|consumidas?|han sido|fueron|van|llevas)\D{0,24}(\d{2,4})\s*(kcal|calorias?|caloria)\b/
+  );
+  if (targeted) {
+    const value = Number(targeted[1]);
+    if (Number.isFinite(value) && value >= 200 && value <= 8000) return value;
+  }
+
+  const generic = normalized.match(/\b(\d{2,4})\s*(kcal|calorias?|caloria)\b/);
+  if (!generic) return null;
+  const value = Number(generic[1]);
+  if (!Number.isFinite(value) || value < 200 || value > 8000) return null;
+  return value;
+}
+
 
 
 
