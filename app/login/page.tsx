@@ -25,27 +25,27 @@ function mapFirebaseError(raw: unknown): string {
       ? (raw as { code: string }).code
       : "";
 
-  if (errorCode === "auth/email-already-in-use") return "Este email ya est\u00e1 registrado.";
-  if (errorCode === "auth/invalid-email") return "Email inv\u00e1lido.";
-  if (errorCode === "auth/weak-password") return "La contrase\u00f1a es demasiado d\u00e9bil.";
+  if (errorCode === "auth/email-already-in-use") return "Este email ya está registrado.";
+  if (errorCode === "auth/invalid-email") return "Email inválido.";
+  if (errorCode === "auth/weak-password") return "La contraseña es demasiado débil.";
   if (errorCode === "auth/operation-not-allowed") {
-    return "Email/Password no est\u00e1 activado en Firebase Authentication.";
+    return "Email/Password no está activado en Firebase Authentication.";
   }
   if (errorCode === "auth/unauthorized-domain") {
     return "Dominio no autorizado. Agrega localhost en Firebase Authentication.";
   }
   if (errorCode === "auth/invalid-api-key") {
-    return "API key inv\u00e1lida. Revisa NEXT_PUBLIC_FIREBASE_API_KEY.";
+    return "API key inválida. Revisa NEXT_PUBLIC_FIREBASE_API_KEY.";
   }
   if (errorCode === "auth/network-request-failed") {
     return "Fallo de red al conectar con Firebase.";
   }
   if (errorCode === "auth/configuration-not-found") {
-    return "Configuraci\u00f3n de autenticaci\u00f3n incompleta en Firebase.";
+    return "Configuración de autenticación incompleta en Firebase.";
   }
   if (errorCode === "auth/user-not-found") return "Usuario no encontrado.";
   if (errorCode === "auth/wrong-password" || errorCode === "auth/invalid-credential") {
-    return "Credenciales inv\u00e1lidas.";
+    return "Credenciales inválidas.";
   }
   if (errorCode === "auth/too-many-requests") {
     return "Demasiados intentos. Espera un momento y vuelve a intentar.";
@@ -78,7 +78,7 @@ export default function LoginPage() {
       body: JSON.stringify({ idToken }),
     });
     if (!response.ok) {
-      throw new Error("No se pudo establecer la sesi\u00f3n segura.");
+      throw new Error("No se pudo establecer la sesión segura.");
     }
   };
 
@@ -100,7 +100,7 @@ export default function LoginPage() {
       await signOut(auth);
       setMode("verify");
       setStatus(
-        "Cuenta creada. Revisa tu email (incluyendo Spam/No deseado), pulsa el enlace y vuelve aqu\u00ed."
+        "Cuenta creada. Revisa tu email (incluyendo Spam/No deseado), pulsa el enlace y vuelve aquí."
       );
     } catch (error) {
       setStatus(mapFirebaseError(error));
@@ -114,7 +114,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       if (!email.trim() || !password.trim()) {
-        setStatus("Necesitas email y contrase\u00f1a para comprobar la verificaci\u00f3n.");
+        setStatus("Necesitas email y contraseña para comprobar la verificación.");
         return;
       }
 
@@ -124,7 +124,7 @@ export default function LoginPage() {
       if (!credential.user.emailVerified) {
         await signOut(auth).catch(() => undefined);
         setStatus(
-          `Tu email a\u00fan no est\u00e1 verificado en Firebase (proyecto: ${firebaseProjectId || "N/D"}). Abre el \u00faltimo correo y pulsa el enlace.`
+          `Tu email aún no está verificado en Firebase (proyecto: ${firebaseProjectId || "N/D"}). Abre el último correo y pulsa el enlace.`
         );
         return;
       }
@@ -143,7 +143,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       if (!email.trim() || !password.trim()) {
-        setStatus("Escribe email y contrase\u00f1a para reenviar la verificaci\u00f3n.");
+        setStatus("Escribe email y contraseña para reenviar la verificación.");
         return;
       }
 
@@ -151,13 +151,13 @@ export default function LoginPage() {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       await credential.user.reload();
       if (credential.user.emailVerified) {
-        setStatus("Tu email ya est\u00e1 verificado. Puedes iniciar sesi\u00f3n.");
+        setStatus("Tu email ya está verificado. Puedes iniciar sesión.");
         return;
       }
 
       await sendEmailVerification(credential.user);
       await signOut(auth);
-      setStatus("Te enviamos un nuevo email. Revisa tambi\u00e9n Spam/No deseado.");
+      setStatus("Te enviamos un nuevo email. Revisa también Spam/No deseado.");
     } catch (error) {
       setStatus(mapFirebaseError(error));
     } finally {
@@ -246,15 +246,15 @@ export default function LoginPage() {
               <input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Contrase\u00f1a"
+                placeholder="Contraseña"
                 type="password"
                 className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
               />
               {mode === "verify" && (
                 <div className="space-y-2">
                   <p className="text-xs text-slate-600">
-                    Abre el correo de verificaci\u00f3n, revisa tambi\u00e9n Spam/No deseado, pulsa el
-                    enlace y luego vuelve aqu\u00ed para continuar.
+                    Abre el correo de verificación, revisa también Spam/No deseado, pulsa el
+                    enlace y luego vuelve aquí para continuar.
                   </p>
                   <button
                     type="button"
@@ -262,13 +262,13 @@ export default function LoginPage() {
                     className="text-xs font-medium text-slate-600 underline underline-offset-2"
                     disabled={isLoading}
                   >
-                    Reenviar email de verificaci\u00f3n
+                    Reenviar email de verificación
                   </button>
                 </div>
               )}
               {mode === "login" ? (
                 <p className="text-xs text-slate-600">
-                  {"\u00bfNo tienes cuenta? "}
+                  {"¿No tienes cuenta? "}
                   <button
                     type="button"
                     onClick={() => {
@@ -278,12 +278,12 @@ export default function LoginPage() {
                     className="font-medium text-slate-700 underline underline-offset-2"
                     disabled={isLoading}
                   >
-                    Reg\u00edstrate
+                    Regístrate
                   </button>
                 </p>
               ) : (
                 <p className="text-xs text-slate-600">
-                  {"\u00bfYa tienes cuenta? "}
+                  {"¿Ya tienes cuenta? "}
                   <button
                     type="button"
                     onClick={() => {
@@ -293,7 +293,7 @@ export default function LoginPage() {
                     className="font-medium text-slate-700 underline underline-offset-2"
                     disabled={isLoading}
                   >
-                    Inicia sesi\u00f3n
+                    Inicia sesión
                   </button>
                 </p>
               )}
@@ -312,7 +312,7 @@ export default function LoginPage() {
                 : mode === "register"
                 ? "Crear cuenta"
                 : mode === "verify"
-                ? "Ya verifiqu\u00e9 mi email"
+                ? "Ya verifiqué mi email"
                 : "Entrar"}
             </button>
           </div>
