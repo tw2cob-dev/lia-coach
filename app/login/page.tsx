@@ -68,6 +68,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const firebaseProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "";
 
   const establishSession = async (user: User) => {
     const idToken = await user.getIdToken(true);
@@ -121,7 +122,10 @@ export default function LoginPage() {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       await credential.user.reload();
       if (!credential.user.emailVerified) {
-        setStatus("Tu email aun no esta verificado. Abre el correo y pulsa el enlace.");
+        await signOut(auth).catch(() => undefined);
+        setStatus(
+          `Tu email aun no esta verificado en Firebase (proyecto: ${firebaseProjectId || "N/D"}). Abre el ultimo correo y pulsa el enlace.`
+        );
         return;
       }
 
@@ -174,6 +178,7 @@ export default function LoginPage() {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       await credential.user.reload();
       if (!credential.user.emailVerified) {
+        await signOut(auth).catch(() => undefined);
         setStatus("Necesitas verificar tu email antes de entrar.");
         return;
       }

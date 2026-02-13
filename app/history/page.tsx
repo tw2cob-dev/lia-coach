@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { classifyMessage, extractWeight } from "../../lib/parsing";
 
 type ChatMessage = {
@@ -18,27 +18,7 @@ type DayGroup = {
 };
 
 export default function HistoryPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem(storageKey);
-    if (!stored) return;
-    try {
-      const parsed = JSON.parse(stored);
-      if (!Array.isArray(parsed)) return;
-      const normalized = parsed.filter(
-        (item) =>
-          item &&
-          typeof item === "object" &&
-          typeof item.id === "string" &&
-          typeof item.text === "string" &&
-          typeof item.ts === "number"
-      ) as ChatMessage[];
-      setMessages(normalized);
-    } catch {
-      return;
-    }
-  }, []);
+  const [messages] = useState<ChatMessage[]>(() => loadStoredMessages());
 
   const grouped = useMemo<DayGroup[]>(() => {
     if (messages.length === 0) return [];
@@ -143,4 +123,24 @@ export default function HistoryPage() {
       </div>
     </div>
   );
+}
+
+function loadStoredMessages(): ChatMessage[] {
+  if (typeof window === "undefined") return [];
+  const stored = window.localStorage.getItem(storageKey);
+  if (!stored) return [];
+  try {
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        typeof item.text === "string" &&
+        typeof item.ts === "number"
+    ) as ChatMessage[];
+  } catch {
+    return [];
+  }
 }

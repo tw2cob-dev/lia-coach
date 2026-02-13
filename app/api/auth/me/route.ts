@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifySessionToken } from "../../../../lib/auth/sessionToken";
+import { isSuperAdminEmail } from "../../../../lib/auth/superAdmin";
 
 export async function GET() {
   const rawToken = (await cookies()).get("lia-auth")?.value ?? "";
@@ -13,5 +14,11 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  return NextResponse.json({ ok: true, user });
+  return NextResponse.json({
+    ok: true,
+    user: {
+      ...user,
+      isSuperAdmin: isSuperAdminEmail(user.email),
+    },
+  });
 }

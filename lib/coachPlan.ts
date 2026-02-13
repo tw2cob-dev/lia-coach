@@ -1,4 +1,10 @@
 export type CoachPlan = {
+  cognitiveProfile?: {
+    nivel_tecnico: "basico" | "medio" | "tecnico" | "ultra";
+    score_tecnico: number;
+    estilo: "neutral" | "humor_sutil" | "serio" | "ultra_resumido";
+    preferencia_detalle: "bajo" | "medio" | "alto";
+  };
   goals: {
     weight?: string | { targetKg?: number; deadline?: string };
     training?: string | { sessionsPerWeek?: number; focus?: string };
@@ -25,6 +31,12 @@ const DEFAULT_VERSION = 1;
 const DEFAULT_PREFERENCES: CoachPlan["preferences"] = {
   language: "es",
   tone: "concise",
+};
+const DEFAULT_COGNITIVE_PROFILE: NonNullable<CoachPlan["cognitiveProfile"]> = {
+  nivel_tecnico: "basico",
+  score_tecnico: 0,
+  estilo: "neutral",
+  preferencia_detalle: "medio",
 };
 
 export function getCoachPlan(): CoachPlan | null {
@@ -57,6 +69,7 @@ export function upsertCoachPlan(partial: Partial<CoachPlan>): CoachPlan {
 
 function createDefaultCoachPlan(): CoachPlan {
   return {
+    cognitiveProfile: { ...DEFAULT_COGNITIVE_PROFILE },
     goals: {},
     preferences: DEFAULT_PREFERENCES,
     metadata: { version: DEFAULT_VERSION },
@@ -67,16 +80,47 @@ function normalizeCoachPlan(input: unknown): CoachPlan | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as Record<string, unknown>;
 
+  const cognitiveProfile = normalizeCognitiveProfile(raw.cognitiveProfile);
   const goals = normalizeGoals(raw.goals);
   const preferences = normalizePreferences(raw.preferences);
   const weeklyPlan = normalizeWeeklyPlan(raw.weeklyPlan);
   const metadata = normalizeMetadata(raw.metadata);
 
   return {
+    cognitiveProfile,
     goals,
     preferences,
     ...(weeklyPlan ? { weeklyPlan } : {}),
     metadata,
+  };
+}
+
+function normalizeCognitiveProfile(
+  input: unknown
+): NonNullable<CoachPlan["cognitiveProfile"]> {
+  if (!input || typeof input !== "object") return { ...DEFAULT_COGNITIVE_PROFILE };
+  const raw = input as Record<string, unknown>;
+  const nivel_tecnico =
+    raw.nivel_tecnico === "medio" ||
+    raw.nivel_tecnico === "tecnico" ||
+    raw.nivel_tecnico === "ultra"
+      ? raw.nivel_tecnico
+      : "basico";
+  const score_tecnico = clampScore(toNumber(raw.score_tecnico) ?? 0);
+  const estilo =
+    raw.estilo === "humor_sutil" || raw.estilo === "serio" || raw.estilo === "ultra_resumido"
+      ? raw.estilo
+      : "neutral";
+  const preferencia_detalle =
+    raw.preferencia_detalle === "bajo" ||
+    raw.preferencia_detalle === "alto"
+      ? raw.preferencia_detalle
+      : "medio";
+  return {
+    nivel_tecnico,
+    score_tecnico,
+    estilo,
+    preferencia_detalle,
   };
 }
 
@@ -161,6 +205,10 @@ function normalizeMetadata(input: unknown): CoachPlan["metadata"] {
 }
 
 function mergeCoachPlan(current: CoachPlan, partial: Partial<CoachPlan>): CoachPlan {
+  const cognitiveProfile = {
+    ...(current.cognitiveProfile ?? DEFAULT_COGNITIVE_PROFILE),
+    ...(partial.cognitiveProfile ?? {}),
+  };
   const goals = {
     ...current.goals,
     ...(partial.goals ?? {}),
@@ -175,6 +223,7 @@ function mergeCoachPlan(current: CoachPlan, partial: Partial<CoachPlan>): CoachP
     ...(partial.metadata ?? {}),
   };
   return {
+    cognitiveProfile,
     goals,
     preferences,
     ...(weeklyPlan ? { weeklyPlan } : {}),
@@ -189,4 +238,9 @@ function toNumber(input: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
+}
+
+function clampScore(input: number): number {
+  if (!Number.isFinite(input)) return 0;
+  return Math.max(0, Math.round(input));
 }

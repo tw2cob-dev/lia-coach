@@ -1,3 +1,5 @@
+import { LIA_WELCOME_CONTEXT_HINT } from "./chat/welcomeMessage";
+
 type LLMMessage = {
   role: "user" | "assistant";
   content: string;
@@ -12,6 +14,7 @@ export async function generateAssistantReply(args: {
   messages: LLMMessage[];
   todaySummary: string;
   weekSummary: string;
+  userName?: string;
 }): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -23,7 +26,7 @@ export async function generateAssistantReply(args: {
     return safeFallback();
   }
 
-  const systemContent = buildSystemContent(args.todaySummary, args.weekSummary);
+  const systemContent = buildSystemContent(args.todaySummary, args.weekSummary, args.userName);
   const startMs = Date.now();
 
   try {
@@ -83,6 +86,7 @@ export async function streamAssistantReply(args: {
   messages: LLMMessage[];
   todaySummary: string;
   weekSummary: string;
+  userName?: string;
   onToken: (chunk: string) => void;
 }): Promise<string> {
   const windowed = windowMessages(args.messages, MAX_CHAT_MESSAGES);
@@ -99,7 +103,7 @@ export async function streamAssistantReply(args: {
     return fallback;
   }
 
-  const systemContent = buildSystemContent(args.todaySummary, args.weekSummary);
+  const systemContent = buildSystemContent(args.todaySummary, args.weekSummary, args.userName);
   const startMs = Date.now();
 
   try {
@@ -207,12 +211,21 @@ function windowMessages(messages: LLMMessage[], maxMessages: number): LLMMessage
   return messages.slice(-maxMessages);
 }
 
-function buildSystemContent(todaySummary: string, weekSummary: string): string {
+function buildSystemContent(todaySummary: string, weekSummary: string, userName?: string): string {
+  const userNameRule = userName
+    ? `El nombre del usuario es "${userName}". Puedes usarlo cuando aporte cercania, pero no en cada respuesta.`
+    : "";
+
   return [
     "You are LIA Coach.",
-    "Responde en español. Sé concisa y accionable.",
-    "No inventes datos. Si falta información, pide como máximo un dato y sugiere un paso seguro.",
-    "No des consejos médicos peligrosos; si hay salud o riesgo, recomienda un profesional.",
+    "Responde en espanol con tono natural, cercano y maduro.",
+    "Adapta nivel tecnico y estilo a lo que pida el usuario sin comprometer seguridad ni veracidad.",
+    "Evita frases teatrales o exageradas.",
+    "Se breve, clara y accionable.",
+    "No inventes datos. Si falta informacion, pide 1-2 datos clave y sugiere un paso seguro.",
+    "No des consejos medicos peligrosos; si hay salud o riesgo, recomienda un profesional.",
+    LIA_WELCOME_CONTEXT_HINT,
+    userNameRule,
     todaySummary ? `Today summary: ${todaySummary}` : "",
     weekSummary ? `Week summary: ${weekSummary}` : "",
   ]
@@ -242,14 +255,19 @@ function logMetrics(args: {
   console.info("[LIA AI]", payload);
 }
 
-function mockAIResponse(args: { todaySummary: string; weekSummary: string }): string {
+function mockAIResponse(args: {
+  todaySummary: string;
+  weekSummary: string;
+  userName?: string;
+}): string {
   const hasSummary = Boolean(args.todaySummary || args.weekSummary);
+  const namePrefix = args.userName ? `${args.userName}, ` : "";
   if (!hasSummary) {
-    return "Hola, estoy aqui. Quieres registrar comida, entrenamiento o una nota rapida?";
+    return `${namePrefix}si quieres, empezamos con como te fue hoy y lo ordenamos en un plan simple.`;
   }
-  return "Estoy aqui para ayudarte. Quieres registrar comida, entrenamiento, peso o una nota rapida?";
-}
-function safeFallback(): string {
-  return "Gracias, lo tengo. ¿Quieres añadir algo más?";
+  return `${namePrefix}podemos registrar comida, entrenamiento, peso o una nota rapida, y te propongo el siguiente paso.`;
 }
 
+function safeFallback(): string {
+  return "Si me das un poco mas de contexto, te ayudo a aterrizarlo en algo simple y util.";
+}

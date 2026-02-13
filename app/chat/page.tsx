@@ -13,9 +13,13 @@ import {
   createUserVoiceEvent,
 } from "../../lib/chatEvents";
 import { streamAssistantReplyForFile, streamAssistantReplyText } from "../../lib/chat/chatLogic";
+import { LIA_WELCOME_MESSAGE } from "../../lib/chat/welcomeMessage";
 import { getFirebaseAuth } from "../../lib/firebase/client";
 
 const CHAT_STORAGE_PREFIX = "lia-chat-events";
+const BUDGET_STORAGE_PREFIX = "lia-chat-budget";
+const COACH_PLAN_STORAGE_KEY = "lia-coach-plan";
+const LEGACY_CHAT_MESSAGES_KEY = "lia-chat-messages";
 const SCROLL_THRESHOLD_PX = 80;
 const MAX_TEXTAREA_HEIGHT_PX = 168;
 const MAX_FILE_TEXT_CHARS = 20000;
@@ -62,6 +66,7 @@ type AuthUser = {
   id: string;
   name: string;
   email: string;
+  isSuperAdmin?: boolean;
 };
 
 function isSelectedFileEvent(
@@ -365,7 +370,8 @@ export default function ChatPage() {
           setStreamingText((prev) => prev + chunk);
         },
         turnId,
-        selectedFileIds
+        selectedFileIds,
+        authUser?.name
       );
 
       reconcileBudget(reservation.reservedOut, getEventText(assistantEvent));
@@ -431,6 +437,7 @@ export default function ChatPage() {
         persistEvents,
         onToken: (chunk) => setStreamingText((prev) => prev + chunk),
         selectedFileIds,
+        userName: authUser?.name,
       });
 
       reconcileBudget(reservation.reservedOut, getEventText(assistantEvent));
@@ -614,10 +621,39 @@ export default function ChatPage() {
       });
   };
 
+  const handleResetChat = () => {
+    if (!authUser?.isSuperAdmin || isStreaming) return;
+    const confirmed = window.confirm(
+      "Esto borrara el historial local del chat y presupuesto en este navegador. Quieres continuar?"
+    );
+    if (!confirmed) return;
+
+    const keysToDelete = Object.keys(window.localStorage).filter(
+      (key) =>
+        key.startsWith(`${CHAT_STORAGE_PREFIX}-`) ||
+        key.startsWith(`${BUDGET_STORAGE_PREFIX}-`) ||
+        key === COACH_PLAN_STORAGE_KEY ||
+        key === LEGACY_CHAT_MESSAGES_KEY
+    );
+
+    for (const key of keysToDelete) {
+      window.localStorage.removeItem(key);
+    }
+
+    setEvents([]);
+    setInput("");
+    setStreamingText("");
+    setPendingAttachment(null);
+    setPendingNote("");
+    setExpandedSummaries({});
+    setSelectedFileIds([]);
+    resetTextareaHeight();
+  };
+
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;
   const selectedFiles = events.filter((event) => isSelectedFileEvent(event, selectedFileIds));
   const dateLabel = buildDateLabel();
-  const hasMessages = events.length > 0 || isStreaming;
+  const welcomeMessage = LIA_WELCOME_MESSAGE;
 
   return (
     <div className="app-bg min-h-screen text-slate-900">
@@ -676,13 +712,25 @@ export default function ChatPage() {
         <section className="glass-card mt-5 flex min-h-[320px] flex-1 flex-col rounded-3xl p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Conversacion</p>
-            <button
-              type="button"
-              className="text-xs font-medium text-slate-500"
-              onClick={() => handleQuickPrompt("Cierre de dia: ")}
-            >
-              Cierre de dia
-            </button>
+            <div className="flex items-center gap-3">
+              {authUser?.isSuperAdmin && (
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-rose-600"
+                  onClick={handleResetChat}
+                  disabled={isStreaming}
+                >
+                  Reset chat
+                </button>
+              )}
+              <button
+                type="button"
+                className="text-xs font-medium text-slate-500"
+                onClick={() => handleQuickPrompt("Cierre de dia: ")}
+              >
+                Cierre de dia
+              </button>
+            </div>
           </div>
 
           <main
@@ -690,39 +738,13 @@ export default function ChatPage() {
             onScroll={handleScroll}
             className="mt-3 flex-1 overflow-y-auto pr-1"
           >
-            {!hasMessages && (
-              <div className="mt-6 rounded-2xl bg-white/80 p-4 text-sm text-slate-700 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Bienvenida</p>
-                <h2 className="mt-1 text-base font-semibold text-slate-900">
-                  Empecemos con algo simple
-                </h2>
-                <p className="mt-2 text-slate-600">
-                  Acabas de crear tu cuenta. Puedes escribir una sola frase y yo te guio paso a paso.
-                </p>
-                <div className="mt-3 space-y-1 text-xs text-slate-500">
-                  <p>1. Cuenta como te sientes hoy.</p>
-                  <p>2. Registra comida o actividad (si quieres).</p>
-                  <p>3. Cierra el dia con un resumen corto.</p>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickPrompt("Hoy me siento...")}
-                    className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
-                  >
-                    Empezar ahora
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickPrompt("Cierre de dia: ")}
-                    className="rounded-full border border-white/70 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-                  >
-                    Cierre de dia
-                  </button>
-                </div>
-              </div>
-            )}
             <ul className="space-y-3 pb-4">
+              <li className="max-w-[85%] rounded-2xl border border-slate-200/80 bg-slate-50/85 px-4 py-3 text-sm text-slate-800 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Bienvenida
+                </p>
+                <p className="mt-1 whitespace-pre-line">{welcomeMessage}</p>
+              </li>
               {events.map((message) => {
                 const isVoice = message.type === "voice";
                 const isImage = message.type === "image";
@@ -1032,7 +1054,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 function readImageDimensions(src: string): Promise<{ width?: number; height?: number }> {
   return new Promise((resolve) => {
     if (!src) return resolve({});
-    const image = new Image();
+    const image = new window.Image();
     image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => resolve({});
     image.src = src;
@@ -1061,8 +1083,6 @@ type BudgetState = {
   cost: number;
   warned: boolean;
 };
-
-const BUDGET_STORAGE_PREFIX = "lia-chat-budget";
 
 function getChatStorageKey(userId: string) {
   return `${CHAT_STORAGE_PREFIX}-${userId}`;
