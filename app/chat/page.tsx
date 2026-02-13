@@ -96,21 +96,13 @@ export default function ChatPage() {
 
   useEffect(() => {
     const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!stored) {
-      router.push("/login");
-      return;
-    }
+    if (!stored) return;
     try {
       const parsed = JSON.parse(stored) as AuthUser;
-      if (!parsed?.email) {
-        router.push("/login");
-        return;
-      }
+      if (!parsed?.email) return;
       setAuthUser(parsed);
-    } catch {
-      router.push("/login");
-    }
-  }, [router]);
+    } catch {}
+  }, []);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -562,7 +554,9 @@ export default function ChatPage() {
 
   const handleLogout = () => {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    router.push("/login");
+    void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+      router.push("/login");
+    });
   };
 
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;

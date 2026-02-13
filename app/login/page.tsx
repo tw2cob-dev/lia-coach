@@ -38,8 +38,12 @@ export default function LoginPage() {
         return;
       }
       setMode("verify");
-      setStatus("Te enviamos un codigo al email.");
-    } catch (error) {
+      setStatus(
+        data.needsVerification
+          ? "Tu cuenta ya existia sin verificar. Te hemos reenviado un codigo."
+          : "Te enviamos un codigo al email.",
+      );
+    } catch {
       setStatus("Error al conectar.");
     } finally {
       setIsLoading(false);
@@ -62,7 +66,29 @@ export default function LoginPage() {
       }
       setMode("login");
       setStatus("Email verificado. Ya puedes entrar.");
-    } catch (error) {
+    } catch {
+      setStatus("Error al conectar.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    setStatus("");
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/auth/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.error || "No se pudo reenviar el codigo.");
+        return;
+      }
+      setStatus("Te enviamos un nuevo codigo al email.");
+    } catch {
       setStatus("Error al conectar.");
     } finally {
       setIsLoading(false);
@@ -86,7 +112,7 @@ export default function LoginPage() {
       const user = data.user as AuthUser;
       window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
       router.push("/chat");
-    } catch (error) {
+    } catch {
       setStatus("Error al conectar.");
     } finally {
       setIsLoading(false);
@@ -149,12 +175,22 @@ export default function LoginPage() {
                 />
               )}
               {mode === "verify" && (
-                <input
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  placeholder="Codigo de 6 digitos"
-                  className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
-                />
+                <div className="space-y-2">
+                  <input
+                    value={code}
+                    onChange={(event) => setCode(event.target.value)}
+                    placeholder="Codigo de 6 digitos"
+                    className="w-full rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleResendCode}
+                    className="text-xs font-medium text-slate-600 underline underline-offset-2"
+                    disabled={isLoading}
+                  >
+                    Reenviar codigo
+                  </button>
+                </div>
               )}
             </div>
 

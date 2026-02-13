@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 
-let cached: ReturnType<typeof createClient> | null = null;
+type SupabaseAdminClient = ReturnType<typeof createClient<any>>;
+
+let cached: SupabaseAdminClient | null = null;
 
 export function getSupabaseAdmin() {
   if (cached) return cached;
@@ -11,7 +13,7 @@ export function getSupabaseAdmin() {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
 
-  cached = createClient(supabaseUrl, supabaseServiceKey, {
+  cached = createClient<any>(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
