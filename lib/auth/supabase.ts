@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
-type SupabaseAdminClient = ReturnType<typeof createClient<any>>;
+type SupabaseAdminClient = ReturnType<typeof createClient>;
 
 let cached: SupabaseAdminClient | null = null;
 
@@ -10,10 +10,16 @@ export function getSupabaseAdmin() {
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    const missing = [
+      !supabaseUrl ? "SUPABASE_URL" : null,
+      !supabaseServiceKey ? "SUPABASE_SERVICE_ROLE_KEY" : null,
+    ].filter(Boolean);
+    throw new Error(
+      `Missing env var(s): ${missing.join(", ")}. Set them in .env.local or OS environment.`
+    );
   }
 
-  cached = createClient<any>(supabaseUrl, supabaseServiceKey, {
+  cached = createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 

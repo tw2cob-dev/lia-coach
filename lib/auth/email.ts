@@ -8,7 +8,13 @@ export async function sendVerificationEmail(args: {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !from) {
-    throw new Error("Missing RESEND_API_KEY or RESEND_FROM_EMAIL");
+    const missing = [
+      !apiKey ? "RESEND_API_KEY" : null,
+      !from ? "RESEND_FROM_EMAIL" : null,
+    ].filter(Boolean);
+    throw new Error(
+      `Missing env var(s): ${missing.join(", ")}. Set them in .env.local or OS environment.`
+    );
   }
 
   const subject = "Tu codigo de verificacion LIA Coach";

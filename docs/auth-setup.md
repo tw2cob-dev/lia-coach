@@ -4,6 +4,8 @@
 Run this SQL in Supabase (SQL editor):
 
 ```sql
+create extension if not exists pgcrypto;
+
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -27,12 +29,15 @@ create index if not exists email_verification_codes_user_idx
 ```
 
 ## Environment variables
-Local `.env.local` and Vercel:
+Set these in local `.env.local` (recommended) and in Vercel project env vars:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`
 - `RESEND_FROM_EMAIL`
+
+Also required by chat features:
+- `OPENAI_API_KEY`
 
 Optional cost tuning:
 - `NEXT_PUBLIC_LIA_COST_INPUT_PER_1K`
