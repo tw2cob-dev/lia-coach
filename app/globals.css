@@ -98,8 +98,9 @@ body {
   left: 0;
   right: 0;
   top: var(--app-vv-top);
-  height: var(--app-vh);
-  min-height: var(--app-vh);
+  bottom: 0;
+  height: auto;
+  min-height: 0;
   width: 100%;
   overflow: hidden;
 }
@@ -281,6 +282,14 @@ body {
 .composer-wrap {
   border-top-color: transparent !important;
   padding-bottom: var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 4px));
+}
+
+.composer-wrap-sticky {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 4px) !important;
+}
+
+.composer-wrap-fixed {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 4px) !important;
 }
 
 .composer-chip {

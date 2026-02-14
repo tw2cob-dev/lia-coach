@@ -196,7 +196,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
+    <div className="mobile-app-shell app-bg overflow-hidden text-slate-900">
       <div className="mx-auto flex h-full max-w-[420px] flex-col justify-between overflow-hidden px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+1.25rem)]">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">LIA Coach</p>

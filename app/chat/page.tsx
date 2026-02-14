@@ -33,10 +33,6 @@ const COACH_PLAN_STORAGE_KEY = "lia-coach-plan";
 const LEGACY_CHAT_MESSAGES_KEY = "lia-chat-messages";
 const SCROLL_THRESHOLD_PX = 80;
 const CHAT_TO_COMPOSER_GAP_PX = 2;
-const COMPOSER_CLEARANCE_REDUCTION_CLOSED_PX = 30;
-const COMPOSER_CLEARANCE_REDUCTION_FOCUSED_PX = 44;
-const COMPOSER_CLEARANCE_OFFSET_CLOSED_PX = 15;
-const COMPOSER_CLEARANCE_OFFSET_FOCUSED_PX = -5;
 const MAX_TEXTAREA_LINES = 2;
 const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
@@ -104,6 +100,11 @@ type ViewportDebugSnapshot = {
   composerTop: number;
   composerBottom: number;
 };
+type DisplayModeDebugSnapshot = {
+  displayMode: string;
+  navigatorStandalone: string;
+  userAgent: string;
+};
 
 function isSelectedFileEvent(
   event: ChatEvent,
@@ -140,7 +141,6 @@ export default function ChatPage() {
   const [, setCoachPlanVersion] = useState(0);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
   const [isViewportDebugEnabled, setIsViewportDebugEnabled] = useState(false);
-  const [composerHeight, setComposerHeight] = useState(64);
   const [viewportCopyFallbackText, setViewportCopyFallbackText] = useState("");
   const [viewportDebug, setViewportDebug] = useState<ViewportDebugSnapshot>({
     innerHeight: 0,
@@ -156,6 +156,11 @@ export default function ChatPage() {
     composerBottom: 0,
   });
   const [viewportLogLines, setViewportLogLines] = useState<string[]>([]);
+  const [displayModeDebug, setDisplayModeDebug] = useState<DisplayModeDebugSnapshot>({
+    displayMode: "unknown",
+    navigatorStandalone: "unknown",
+    userAgent: "",
+  });
   const activeUserId = authUser?.id ?? "anon";
   const activeChatStorageKey = getChatStorageKey(activeUserId);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -166,7 +171,6 @@ export default function ChatPage() {
   const headerRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
-  const baseComposerHeightRef = useRef<number | null>(null);
   const viewportLogRef = useRef<string[]>([]);
   const viewportDebugTapCountRef = useRef(0);
   const viewportDebugTapTimerRef = useRef<number | null>(null);
@@ -228,6 +232,32 @@ export default function ChatPage() {
   }, [router]);
 
   useEffect(() => bindAppViewportHeightVar(), []);
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const previous = {
+      htmlOverflow: html.style.overflow,
+      htmlHeight: html.style.height,
+      bodyOverflow: body.style.overflow,
+      bodyHeight: body.style.height,
+      bodyMinHeight: body.style.minHeight,
+    };
+
+    html.style.overflow = "auto";
+    html.style.height = "auto";
+    body.style.overflow = "auto";
+    body.style.height = "auto";
+    body.style.minHeight = "100lvh";
+
+    return () => {
+      html.style.overflow = previous.htmlOverflow;
+      html.style.height = previous.htmlHeight;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.height = previous.bodyHeight;
+      body.style.minHeight = previous.bodyMinHeight;
+    };
+  }, []);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -323,6 +353,22 @@ export default function ChatPage() {
   }, [isViewportDebugEnabled]);
 
   useEffect(() => {
+    if (!isViewportDebugEnabled) return;
+    const updateDisplayModeDebug = () => {
+      setDisplayModeDebug(readDisplayModeDebugSnapshot());
+    };
+    updateDisplayModeDebug();
+    window.addEventListener("resize", updateDisplayModeDebug);
+    window.addEventListener("orientationchange", updateDisplayModeDebug);
+    document.addEventListener("visibilitychange", updateDisplayModeDebug);
+    return () => {
+      window.removeEventListener("resize", updateDisplayModeDebug);
+      window.removeEventListener("orientationchange", updateDisplayModeDebug);
+      document.removeEventListener("visibilitychange", updateDisplayModeDebug);
+    };
+  }, [isViewportDebugEnabled]);
+
+  useEffect(() => {
     if (!isStreaming && isComposerFocused) {
       inputRef.current?.focus();
     }
@@ -344,33 +390,6 @@ export default function ChatPage() {
         window.clearTimeout(viewportDebugTapTimerRef.current);
       }
     };
-  }, []);
-
-  useEffect(() => {
-    const composerEl = composerRef.current;
-    if (!composerEl) return;
-
-    const measureComposerHeight = () => {
-      const next = Math.round(composerEl.getBoundingClientRect().height);
-      if (next <= 0) return;
-      if (baseComposerHeightRef.current === null) {
-        baseComposerHeightRef.current = next;
-        setComposerHeight(next);
-        return;
-      }
-      const capped = Math.min(next, baseComposerHeightRef.current + 2);
-      setComposerHeight(capped);
-    };
-
-    measureComposerHeight();
-
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      measureComposerHeight();
-    });
-    observer.observe(composerEl);
-
-    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -592,6 +611,9 @@ export default function ChatPage() {
   const copyViewportDebugLog = async () => {
     const header = [
       "[LIA viewport debug]",
+      `displayMode=${displayModeDebug.displayMode}`,
+      `navigatorStandalone=${displayModeDebug.navigatorStandalone}`,
+      `userAgent=${displayModeDebug.userAgent}`,
       `innerHeight=${viewportDebug.innerHeight}`,
       `outerHeight=${viewportDebug.outerHeight}`,
       `scrollY=${viewportDebug.scrollY}`,
@@ -1090,18 +1112,6 @@ export default function ChatPage() {
 
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;
   const selectedFiles = events.filter((event) => isSelectedFileEvent(event, selectedFileIds));
-  const composerClearanceBasePx =
-    composerHeight -
-    (isComposerFocused
-      ? COMPOSER_CLEARANCE_REDUCTION_FOCUSED_PX
-      : COMPOSER_CLEARANCE_REDUCTION_CLOSED_PX);
-  const composerClearancePx = Math.max(
-    0,
-    composerClearanceBasePx +
-      (isComposerFocused
-        ? COMPOSER_CLEARANCE_OFFSET_FOCUSED_PX
-        : COMPOSER_CLEARANCE_OFFSET_CLOSED_PX)
-  );
   const dateLabel = buildDateLabel();
   const welcomeMessage = LIA_WELCOME_MESSAGE;
   const coachPlan = hasHydrated ? getCoachPlan() : null;
@@ -1192,8 +1202,8 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
-      <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-0 pt-[calc(env(safe-area-inset-top)+1rem)]">
+    <div className="app-bg h-[100lvh] overflow-hidden text-slate-900">
+      <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-[env(safe-area-inset-bottom)] pt-[calc(env(safe-area-inset-top)+1rem)]">
         <header ref={headerRef} className="sticky top-0 z-20 shrink-0 flex items-center justify-between">
           <div className="min-w-0 pl-1">
             <h1 className="font-display truncate text-2xl text-slate-900">
@@ -1349,6 +1359,13 @@ export default function ChatPage() {
               </button>
               <button
                 type="button"
+                className="text-xs font-semibold text-slate-600"
+                onClick={() => router.push("/probe")}
+              >
+                Probe
+              </button>
+              <button
+                type="button"
                 className="text-xs font-semibold text-rose-600"
                 onClick={handleResetChat}
                 disabled={isStreaming}
@@ -1435,6 +1452,9 @@ export default function ChatPage() {
               </div>
               <p className="mt-1 whitespace-pre-wrap">{`build=${VIEWPORT_DEBUG_BUILD}`}</p>
               <p className="mt-1 whitespace-pre-wrap">
+                {`displayMode=${displayModeDebug.displayMode} navigatorStandalone=${displayModeDebug.navigatorStandalone}`}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap">
                 {`inner=${viewportDebug.innerHeight} outer=${viewportDebug.outerHeight} scrollY=${viewportDebug.scrollY} active=${viewportDebug.activeTag}`}
               </p>
               <p className="mt-1 whitespace-pre-wrap">
@@ -1460,7 +1480,7 @@ export default function ChatPage() {
             ref={scrollRef}
             onScroll={handleScroll}
             className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-            style={{ paddingBottom: `${composerClearancePx}px` }}
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}
           >
             <ul className="message-list px-1 pb-1">
               <li className="message-row">
@@ -1618,7 +1638,7 @@ export default function ChatPage() {
               event.preventDefault();
               void handleSubmit();
             }}
-            className="composer-wrap absolute inset-x-1 bottom-0 z-20 mt-0 pt-1"
+            className="composer-wrap composer-wrap-fixed fixed bottom-0 left-1/2 z-30 mt-1 w-full max-w-[520px] -translate-x-1/2 px-3 pt-1"
           >
             {selectedFileIds.length > 0 && (
               <div className="composer-chip mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
@@ -1807,6 +1827,25 @@ function buildDateLabel() {
   });
   const raw = formatter.format(now);
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function readDisplayModeDebugSnapshot(): DisplayModeDebugSnapshot {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return {
+      displayMode: "unknown",
+      navigatorStandalone: "unknown",
+      userAgent: "",
+    };
+  }
+  const standaloneByMedia = window.matchMedia("(display-mode: standalone)").matches;
+  const standaloneByNavigator =
+    "standalone" in navigator
+      ? Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
+      : false;
+  const displayMode = standaloneByMedia ? "standalone" : "browser";
+  const navigatorStandalone = standaloneByNavigator ? "true" : "false";
+  const userAgent = navigator.userAgent.slice(0, 180);
+  return { displayMode, navigatorStandalone, userAgent };
 }
 
 function isAllowedFile(file: File): boolean {

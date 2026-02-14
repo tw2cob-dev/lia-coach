@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "LIA Coach",
     description: "Acompanamiento diario para alimentacion, entrenamiento y salud.",
     start_url: "/chat",
-    display: "standalone",
+    display: "fullscreen",
     background_color: "#080a10",
     theme_color: "#080a10",
     lang: "es-ES",
