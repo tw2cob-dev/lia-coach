@@ -1,5 +1,6 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
 function readEnv(name: string): string {
   let value: string | undefined;
@@ -23,4 +24,16 @@ export function getFirebaseAuth() {
 
   const app = getApps().length ? getApp() : initializeApp(config);
   return getAuth(app);
+}
+
+export function getFirebaseDb() {
+  const config = {
+    apiKey: readEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
+    authDomain: readEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
+    projectId: readEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
+    appId: readEnv("NEXT_PUBLIC_FIREBASE_APP_ID"),
+  };
+
+  const app = getApps().length ? getApp() : initializeApp(config);
+  return getFirestore(app);
 }

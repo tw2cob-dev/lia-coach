@@ -30,8 +30,6 @@ html,
 body {
   height: 100%;
   width: 100%;
-  position: fixed;
-  inset: 0;
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -281,6 +279,7 @@ body {
 
 .composer-wrap {
   border-top-color: transparent !important;
+  padding-bottom: var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 4px));
 }
 
 .composer-chip {

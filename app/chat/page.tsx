@@ -17,7 +17,13 @@ import { AIReplyDebug } from "../../lib/aiClient";
 import { extractMemoryPatch } from "../../lib/aiMemoryClient";
 import { buildDashboardMetrics } from "../../lib/chat/dashboardMetrics";
 import { LIA_WELCOME_MESSAGE } from "../../lib/chat/welcomeMessage";
-import { CoachPlan, getCoachPlan, upsertCoachPlan } from "../../lib/coachPlan";
+import { CoachPlan, getCoachPlan, saveCoachPlan, upsertCoachPlan } from "../../lib/coachPlan";
+import {
+  clearCloudChatState,
+  loadCloudChatState,
+  saveCloudChatState,
+  subscribeCloudChatState,
+} from "../../lib/firebase/cloudSync";
 import { getFirebaseAuth } from "../../lib/firebase/client";
 import { bindAppViewportHeightVar } from "../../lib/ui/mobileViewport";
 
@@ -31,6 +37,8 @@ const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
 const MAX_SELECTED_FILES = 3;
 const THEME_STORAGE_KEY = "lia-theme-preference";
+const VIEWPORT_DEBUG_STORAGE_KEY = "lia-debug-viewport";
+const VIEWPORT_DEBUG_BUILD = "viewport-fix-2026-02-14-1746";
 
 const DAILY_TOKEN_BUDGET = 20000;
 const DAILY_MESSAGE_BUDGET = 50;
@@ -78,6 +86,19 @@ type AuthUser = {
 type ThemePreference = "light" | "dark" | "system";
 type SummaryCardKey = "food" | "activity" | "weight";
 type SummaryCardMode = "value" | "chart" | "hint";
+type ViewportDebugSnapshot = {
+  innerHeight: number;
+  outerHeight: number;
+  scrollY: number;
+  activeTag: string;
+  vvHeight: number;
+  vvOffsetTop: number;
+  vvPageTop: number;
+  headerTop: number;
+  headerBottom: number;
+  composerTop: number;
+  composerBottom: number;
+};
 
 function isSelectedFileEvent(
   event: ChatEvent,
@@ -110,7 +131,24 @@ export default function ChatPage() {
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
-  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [, setCoachPlanVersion] = useState(0);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [isViewportDebugEnabled, setIsViewportDebugEnabled] = useState(false);
+  const [viewportCopyFallbackText, setViewportCopyFallbackText] = useState("");
+  const [viewportDebug, setViewportDebug] = useState<ViewportDebugSnapshot>({
+    innerHeight: 0,
+    outerHeight: 0,
+    scrollY: 0,
+    activeTag: "none",
+    vvHeight: 0,
+    vvOffsetTop: 0,
+    vvPageTop: 0,
+    headerTop: 0,
+    headerBottom: 0,
+    composerTop: 0,
+    composerBottom: 0,
+  });
+  const [viewportLogLines, setViewportLogLines] = useState<string[]>([]);
   const activeUserId = authUser?.id ?? "anon";
   const activeChatStorageKey = getChatStorageKey(activeUserId);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -118,6 +156,11 @@ export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const profilePanelRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
+  const viewportLogRef = useRef<string[]>([]);
+  const viewportDebugTapCountRef = useRef(0);
+  const viewportDebugTapTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -182,52 +225,97 @@ export default function ChatPage() {
   useEffect(() => bindAppViewportHeightVar(), []);
 
   useEffect(() => {
-    const viewport = window.visualViewport;
-    if (!viewport) return;
-
-    let baselineHeight = viewport.height;
-
-    const isTextEditingTarget = (el: Element | null) => {
-      if (!(el instanceof HTMLElement)) return false;
-      if (el instanceof HTMLTextAreaElement) return true;
-      if (el instanceof HTMLInputElement) {
-        const type = (el.type || "text").toLowerCase();
-        return !["button", "checkbox", "radio", "file", "submit", "reset", "range", "color"].includes(type);
-      }
-      return el.isContentEditable;
-    };
-
-    const detectKeyboard = () => {
-      const activeElement = document.activeElement;
-      const isEditing = isTextEditingTarget(activeElement);
-      if (!isEditing && viewport.height > baselineHeight) {
-        baselineHeight = viewport.height;
-      }
-      const keyboardLikelyOpen = isEditing && baselineHeight - viewport.height > 80;
-      setIsKeyboardOpen(keyboardLikelyOpen);
-    };
-
-    detectKeyboard();
-    viewport.addEventListener("resize", detectKeyboard);
-    window.addEventListener("focusin", detectKeyboard);
-    window.addEventListener("focusout", detectKeyboard);
-    const handleOrientationChange = () => {
-      baselineHeight = viewport.height;
-      detectKeyboard();
-    };
-    window.addEventListener("orientationchange", handleOrientationChange);
-
-    return () => {
-      viewport.removeEventListener("resize", detectKeyboard);
-      window.removeEventListener("focusin", detectKeyboard);
-      window.removeEventListener("focusout", detectKeyboard);
-      window.removeEventListener("orientationchange", handleOrientationChange);
-    };
+    setHasHydrated(true);
   }, []);
 
   useEffect(() => {
-    setHasHydrated(true);
+    const params = new URLSearchParams(window.location.search);
+    const persisted = window.localStorage.getItem(VIEWPORT_DEBUG_STORAGE_KEY) === "1";
+    if (params.get("debugViewport") === "1" || persisted) {
+      setIsViewportDebugEnabled(true);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!isViewportDebugEnabled) return;
+
+    const now = () =>
+      new Date().toLocaleTimeString("es-ES", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    const activeTagName = () => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement)) return "none";
+      const base = active.tagName.toLowerCase();
+      const idPart = active.id ? `#${active.id}` : "";
+      const namePart = active.getAttribute("name") ? `[name=${active.getAttribute("name")}]` : "";
+      return `${base}${idPart}${namePart}`;
+    };
+
+    const readSnapshot = (): ViewportDebugSnapshot => {
+      const vv = window.visualViewport;
+      const headerRect = headerRef.current?.getBoundingClientRect();
+      const composerRect = composerRef.current?.getBoundingClientRect();
+      return {
+        innerHeight: Math.round(window.innerHeight),
+        outerHeight: Math.round(window.outerHeight),
+        scrollY: Math.round(window.scrollY),
+        activeTag: activeTagName(),
+        vvHeight: Math.round(vv?.height ?? 0),
+        vvOffsetTop: Math.round(vv?.offsetTop ?? 0),
+        vvPageTop: Math.round(vv?.pageTop ?? 0),
+        headerTop: Math.round(headerRect?.top ?? 0),
+        headerBottom: Math.round(headerRect?.bottom ?? 0),
+        composerTop: Math.round(composerRect?.top ?? 0),
+        composerBottom: Math.round(composerRect?.bottom ?? 0),
+      };
+    };
+
+    const appendLog = (label: string) => {
+      const snap = readSnapshot();
+      const line = `${now()} ${label} | inner=${snap.innerHeight} vv=${snap.vvHeight} offTop=${snap.vvOffsetTop} scrollY=${snap.scrollY} active=${snap.activeTag} header=[${snap.headerTop},${snap.headerBottom}] composer=[${snap.composerTop},${snap.composerBottom}]`;
+      viewportLogRef.current = [...viewportLogRef.current.slice(-59), line];
+      setViewportLogLines(viewportLogRef.current);
+      setViewportDebug(snap);
+    };
+
+    let rafId: number | null = null;
+    const schedule = (label: string) => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        appendLog(label);
+      });
+    };
+
+    const onFocusIn = () => schedule("focusin");
+    const onFocusOut = () => schedule("focusout");
+    const onResize = () => schedule("window.resize");
+    const onScroll = () => schedule("window.scroll");
+    const onOrientation = () => schedule("orientationchange");
+    const vv = window.visualViewport;
+    const onVvResize = () => schedule("vv.resize");
+    const onVvScroll = () => schedule("vv.scroll");
+
+    appendLog("debug.start");
+    window.addEventListener("focusin", onFocusIn);
+    window.addEventListener("focusout", onFocusOut);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("orientationchange", onOrientation);
+    vv?.addEventListener("resize", onVvResize);
+    vv?.addEventListener("scroll", onVvScroll);
+
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      window.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("focusout", onFocusOut);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("orientationchange", onOrientation);
+      vv?.removeEventListener("resize", onVvResize);
+      vv?.removeEventListener("scroll", onVvScroll);
+    };
+  }, [isViewportDebugEnabled]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -240,6 +328,14 @@ export default function ChatPage() {
     if (stored === "light" || stored === "dark" || stored === "system") {
       setThemePreference(stored);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (viewportDebugTapTimerRef.current !== null) {
+        window.clearTimeout(viewportDebugTapTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -281,63 +377,75 @@ export default function ChatPage() {
   useEffect(() => {
     if (!authUser?.id) {
       setEvents([]);
+      setCloudSyncError(null);
       return;
     }
+    let cancelled = false;
+    let unsubscribeCloud: (() => void) | null = null;
+    const localEvents = readEventsFromStorage(activeChatStorageKey);
+    setEvents(localEvents);
+    setCloudSyncError(null);
 
-    const stored = window.localStorage.getItem(activeChatStorageKey);
-    if (!stored) {
-      setEvents([]);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(stored);
-      if (!Array.isArray(parsed)) return;
-      const normalized = parsed.filter((item) => {
-        if (!item || typeof item !== "object") return false;
-        if (item.type === "text") {
-          return (
-            (item.role === "user" || item.role === "assistant") &&
-            typeof item.id === "string" &&
-            typeof item.ts === "number" &&
-            typeof item.text === "string"
-          );
+    void (async () => {
+      try {
+        const cloudState = await loadCloudChatState(authUser.id);
+        if (cancelled) return;
+
+        const cloudEvents = normalizeChatEvents(cloudState?.events ?? []);
+        const mergedEvents = mergeEvents(localEvents, cloudEvents);
+        const localPlan = getCoachPlan();
+        const mergedPlan = mergeCoachPlans(localPlan, cloudState?.coachPlan ?? null);
+
+        setEvents(mergedEvents);
+        window.localStorage.setItem(activeChatStorageKey, JSON.stringify(mergedEvents));
+        if (mergedPlan) {
+          saveCoachPlan(mergedPlan);
+          setCoachPlanVersion((prev) => prev + 1);
         }
-        if (item.type === "voice") {
-          return (
-            (item.role === "user" || item.role === "assistant") &&
-            typeof item.id === "string" &&
-            typeof item.ts === "number" &&
-            typeof item.content === "string"
-          );
+
+        const shouldPushMerged =
+          mergedEvents.length !== cloudEvents.length ||
+          (mergedPlan && cloudState?.coachPlan === null) ||
+          (!cloudState && (mergedEvents.length > 0 || mergedPlan));
+
+        if (shouldPushMerged) {
+          await saveCloudChatState(authUser.id, {
+            events: mergedEvents,
+            coachPlan: mergedPlan,
+          });
         }
-        if (item.type === "image") {
-          return (
-            (item.role === "user" || item.role === "assistant") &&
-            typeof item.id === "string" &&
-            typeof item.ts === "number" &&
-            typeof item.content === "string" &&
-            item.image &&
-            typeof item.image === "object" &&
-            typeof item.image.src === "string"
-          );
-        }
-        if (item.type === "file") {
-          return (
-            (item.role === "user" || item.role === "assistant") &&
-            typeof item.id === "string" &&
-            typeof item.ts === "number" &&
-            typeof item.content === "string" &&
-            item.file &&
-            typeof item.file === "object" &&
-            typeof item.file.name === "string"
-          );
-        }
-        return false;
-      }) as ChatEvent[];
-      setEvents(normalized);
-    } catch {
-      return;
-    }
+        setCloudSyncError(null);
+
+        unsubscribeCloud = subscribeCloudChatState(
+          authUser.id,
+          (liveCloudState) => {
+            if (cancelled || !liveCloudState) return;
+            const latestLocalEvents = readEventsFromStorage(activeChatStorageKey);
+            const nextEvents = mergeEvents(latestLocalEvents, normalizeChatEvents(liveCloudState.events));
+            setEvents(nextEvents);
+            window.localStorage.setItem(activeChatStorageKey, JSON.stringify(nextEvents));
+            if (liveCloudState.coachPlan) {
+              saveCoachPlan(liveCloudState.coachPlan);
+              setCoachPlanVersion((prev) => prev + 1);
+            }
+            setCloudSyncError(null);
+          },
+          (error) => {
+            if (cancelled) return;
+            setCloudSyncError(buildCloudSyncErrorMessage("snapshot", error));
+          }
+        );
+      } catch (error) {
+        if (cancelled) return;
+        setCloudSyncError(buildCloudSyncErrorMessage("load", error));
+        return;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unsubscribeCloud) unsubscribeCloud();
+    };
   }, [activeChatStorageKey, authUser?.id]);
 
   useEffect(() => {
@@ -385,13 +493,101 @@ export default function ChatPage() {
     el.style.overflowY = "hidden";
   };
 
-  const persistEvents = (next: ChatEvent[]) => {
+  const persistEventsLocal = (next: ChatEvent[]) => {
     window.localStorage.setItem(activeChatStorageKey, JSON.stringify(next));
+  };
+  const persistEvents = (next: ChatEvent[]) => {
+    persistEventsLocal(next);
+    if (!authUser?.id) return;
+    void saveCloudChatState(authUser.id, {
+      events: next,
+      coachPlan: getCoachPlan(),
+    })
+      .then(() => setCloudSyncError(null))
+      .catch((error) => {
+        setCloudSyncError(buildCloudSyncErrorMessage("save", error));
+      });
   };
 
   const clearPendingAttachment = () => {
     setPendingAttachment(null);
     setPendingNote("");
+  };
+
+  const copyViewportDebugLog = async () => {
+    const header = [
+      "[LIA viewport debug]",
+      `innerHeight=${viewportDebug.innerHeight}`,
+      `outerHeight=${viewportDebug.outerHeight}`,
+      `scrollY=${viewportDebug.scrollY}`,
+      `active=${viewportDebug.activeTag}`,
+      `vvHeight=${viewportDebug.vvHeight}`,
+      `vvOffsetTop=${viewportDebug.vvOffsetTop}`,
+      `vvPageTop=${viewportDebug.vvPageTop}`,
+      `header=[${viewportDebug.headerTop},${viewportDebug.headerBottom}]`,
+      `composer=[${viewportDebug.composerTop},${viewportDebug.composerBottom}]`,
+      "",
+    ].join("\n");
+    const payload = `${header}${viewportLogLines.join("\n")}`;
+    const stamp = new Date().toLocaleTimeString("es-ES", { hour12: false });
+    try {
+      await navigator.clipboard.writeText(payload);
+      setViewportCopyFallbackText("");
+      setViewportLogLines((prev) => [...prev.slice(-59), `${stamp} copied.log`]);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-1000px";
+      textarea.style.left = "-1000px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      if (copied) {
+        setViewportCopyFallbackText("");
+        setViewportLogLines((prev) => [...prev.slice(-59), `${stamp} copied.execCommand`]);
+        return;
+      }
+      setViewportCopyFallbackText(payload);
+      setViewportLogLines((prev) => [...prev.slice(-59), `${stamp} copy.failed.manual`]);
+    }
+  };
+
+  const toggleViewportDebug = () => {
+    setIsViewportDebugEnabled((prev) => {
+      const next = !prev;
+      if (next) {
+        window.localStorage.setItem(VIEWPORT_DEBUG_STORAGE_KEY, "1");
+      } else {
+        window.localStorage.removeItem(VIEWPORT_DEBUG_STORAGE_KEY);
+      }
+      return next;
+    });
+  };
+
+  const handleViewportDebugTap = () => {
+    if (viewportDebugTapTimerRef.current !== null) {
+      window.clearTimeout(viewportDebugTapTimerRef.current);
+    }
+    viewportDebugTapCountRef.current += 1;
+    if (viewportDebugTapCountRef.current >= 5) {
+      viewportDebugTapCountRef.current = 0;
+      toggleViewportDebug();
+      return;
+    }
+    viewportDebugTapTimerRef.current = window.setTimeout(() => {
+      viewportDebugTapCountRef.current = 0;
+      viewportDebugTapTimerRef.current = null;
+    }, 1500);
   };
 
   const getEventText = (event: ChatEvent) => {
@@ -528,7 +724,17 @@ export default function ChatPage() {
       todayISO: getLocalDateKey(),
     });
     if (!patch) return;
-    upsertCoachPlan(patch);
+    const nextPlan = upsertCoachPlan(patch);
+    setCoachPlanVersion((prev) => prev + 1);
+    if (!authUser?.id) return;
+    void saveCloudChatState(authUser.id, {
+      events: readEventsFromStorage(activeChatStorageKey),
+      coachPlan: nextPlan,
+    })
+      .then(() => setCloudSyncError(null))
+      .catch((error) => {
+        setCloudSyncError(buildCloudSyncErrorMessage("plan", error));
+      });
   };
   const syncSignalsFromAssistantReply = (text: string) => {
     const intakeKcal = extractAssistantIntakeKcal(text);
@@ -541,7 +747,17 @@ export default function ChatPage() {
         },
       },
     };
-    upsertCoachPlan(patch);
+    const nextPlan = upsertCoachPlan(patch);
+    setCoachPlanVersion((prev) => prev + 1);
+    if (!authUser?.id) return;
+    void saveCloudChatState(authUser.id, {
+      events: readEventsFromStorage(activeChatStorageKey),
+      coachPlan: nextPlan,
+    })
+      .then(() => setCloudSyncError(null))
+      .catch((error) => {
+        setCloudSyncError(buildCloudSyncErrorMessage("signals", error));
+      });
   };
     const sendPendingAttachment = async () => {
     if (!pendingAttachment) return false;
@@ -781,6 +997,9 @@ export default function ChatPage() {
     for (const key of keysToDelete) {
       window.localStorage.removeItem(key);
     }
+    if (authUser?.id) {
+      void clearCloudChatState(authUser.id).catch(() => undefined);
+    }
 
     setEvents([]);
     setInput("");
@@ -886,14 +1105,22 @@ export default function ChatPage() {
   return (
     <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
       <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-0 pt-[calc(env(safe-area-inset-top)+1rem)]">
-        <header className="shrink-0 flex items-center justify-between">
+        <header ref={headerRef} className="sticky top-0 z-20 shrink-0 flex items-center justify-between">
           <div className="min-w-0 pl-1">
-            <h1 className={`font-display truncate text-slate-900 ${isKeyboardOpen ? "text-xl" : "text-2xl"}`}>
-              <span className="text-[0.9em] font-medium uppercase tracking-[0.18em] text-slate-300">LIA</span>
+            <h1 className="font-display truncate text-2xl text-slate-900">
+              <button
+                type="button"
+                onClick={handleViewportDebugTap}
+                className="text-[0.9em] font-medium uppercase tracking-[0.18em] text-slate-300"
+                aria-label="LIA"
+                title="Toca 5 veces para debug viewport"
+              >
+                LIA
+              </button>
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`summary-switch inline-flex shrink-0 rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm ${isKeyboardOpen ? "hidden" : ""}`}>
+            <div className="summary-switch inline-flex shrink-0 rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm">
               <button
                 type="button"
                 onClick={() => setSummaryMode("daily")}
@@ -993,7 +1220,7 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <section className={`summary-shell glass-card summary-card mt-1 shrink-0 rounded-[20px] p-2 ${isKeyboardOpen ? "hidden" : ""}`}>
+        <section className="summary-shell glass-card summary-card mt-1 shrink-0 rounded-[20px] p-2">
           <div className="grid grid-cols-3 items-start gap-2">
             {summaryItems.map((item) => (
               <button
@@ -1078,6 +1305,65 @@ export default function ChatPage() {
                   ) : null}
                 </div>
               )}
+            </div>
+          )}
+          {cloudSyncError && (
+            <div className="mt-2 rounded-2xl border border-rose-200 bg-rose-50/90 p-3 text-xs text-rose-800">
+              <p className="font-semibold">Error Firestore</p>
+              <p className="mt-1 whitespace-pre-wrap">{cloudSyncError}</p>
+            </div>
+          )}
+          {isViewportDebugEnabled && (
+            <div className="mt-2 rounded-2xl border border-slate-500 bg-slate-50/98 p-3 text-[10px] text-slate-950">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold">Debug Viewport</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white"
+                    onClick={toggleViewportDebug}
+                  >
+                    Ocultar
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white"
+                    onClick={() => void copyViewportDebugLog()}
+                  >
+                    Copiar log
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white"
+                    onClick={() => {
+                      viewportLogRef.current = [];
+                      setViewportLogLines([]);
+                    }}
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1 whitespace-pre-wrap">{`build=${VIEWPORT_DEBUG_BUILD}`}</p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {`inner=${viewportDebug.innerHeight} outer=${viewportDebug.outerHeight} scrollY=${viewportDebug.scrollY} active=${viewportDebug.activeTag}`}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {`vv.height=${viewportDebug.vvHeight} vv.offsetTop=${viewportDebug.vvOffsetTop} vv.pageTop=${viewportDebug.vvPageTop}`}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {`header=[${viewportDebug.headerTop}, ${viewportDebug.headerBottom}] composer=[${viewportDebug.composerTop}, ${viewportDebug.composerBottom}]`}
+              </p>
+              <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-900 p-2 text-slate-100">
+                {viewportLogLines.slice(-8).join("\n")}
+              </pre>
+              {viewportCopyFallbackText ? (
+                <textarea
+                  readOnly
+                  value={viewportCopyFallbackText}
+                  className="mt-2 h-28 w-full rounded-xl border border-slate-500 bg-slate-100 p-2 text-[10px] text-slate-950"
+                />
+              ) : null}
             </div>
           )}
 
@@ -1237,6 +1523,7 @@ export default function ChatPage() {
             <div ref={endRef} />
           </main>
           <form
+            ref={composerRef}
             onSubmit={(event) => {
               event.preventDefault();
               void handleSubmit();
@@ -1499,6 +1786,24 @@ function createId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function buildCloudSyncErrorMessage(stage: string, error: unknown): string {
+  const details = formatFirebaseError(error);
+  return `Fallo en sincronizacion (${stage}). ${details}`;
+}
+
+function formatFirebaseError(error: unknown): string {
+  if (typeof error === "string" && error.trim()) return error;
+  if (!error || typeof error !== "object") return "Error desconocido.";
+
+  const maybeCode = "code" in error && typeof error.code === "string" ? error.code : "";
+  const maybeMessage = "message" in error && typeof error.message === "string" ? error.message : "";
+
+  if (maybeCode && maybeMessage) return `${maybeCode}: ${maybeMessage}`;
+  if (maybeMessage) return maybeMessage;
+  if (maybeCode) return maybeCode;
+  return "Error desconocido.";
+}
+
 function MiniBarChart({ values }: { values: number[] }) {
   const max = Math.max(1, ...values.map((value) => Math.max(0, value)));
   return (
@@ -1518,6 +1823,140 @@ function MiniBarChart({ values }: { values: number[] }) {
       })}
     </div>
   );
+}
+
+function normalizeChatEvents(input: unknown): ChatEvent[] {
+  if (!Array.isArray(input)) return [];
+  const normalized: ChatEvent[] = [];
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
+    if (!item || typeof item !== "object") continue;
+
+    const rawRole = "role" in item ? item.role : undefined;
+    const role = rawRole === "user" || rawRole === "assistant" ? rawRole : null;
+    if (!role) continue;
+
+    const rawTs = "ts" in item ? item.ts : undefined;
+    const ts =
+      typeof rawTs === "number"
+        ? rawTs
+        : typeof rawTs === "string"
+        ? Number(rawTs)
+        : Number.NaN;
+    const safeTs = Number.isFinite(ts) ? ts : Date.now() + index;
+
+    const rawId = "id" in item ? item.id : undefined;
+    const id = typeof rawId === "string" && rawId.trim() ? rawId : `legacy_${safeTs}_${index}`;
+    const turnId = "turnId" in item && typeof item.turnId === "string" ? item.turnId : undefined;
+
+    const rawType = "type" in item ? item.type : undefined;
+    if (rawType === "text" || (!rawType && ("text" in item || "message" in item))) {
+      const text =
+        "text" in item && typeof item.text === "string"
+          ? item.text
+          : "message" in item && typeof item.message === "string"
+          ? item.message
+          : "content" in item && typeof item.content === "string"
+          ? item.content
+          : "";
+      normalized.push({ type: "text", role, id, ts: safeTs, text, turnId });
+      continue;
+    }
+
+    if (rawType === "voice") {
+      const content = "content" in item && typeof item.content === "string" ? item.content : "";
+      normalized.push({ type: "voice", role, id, ts: safeTs, content, turnId });
+      continue;
+    }
+
+    if (rawType === "image" && "image" in item && item.image && typeof item.image === "object") {
+      const hasSrc = "src" in item.image && typeof item.image.src === "string";
+      if (!hasSrc) continue;
+      const content = "content" in item && typeof item.content === "string" ? item.content : "";
+      normalized.push({
+        type: "image",
+        role,
+        id,
+        ts: safeTs,
+        content,
+        image: item.image as NonNullable<Extract<ChatEvent, { type: "image" }>["image"]>,
+        turnId,
+      });
+      continue;
+    }
+
+    if (rawType === "file" && "file" in item && item.file && typeof item.file === "object") {
+      const hasName = "name" in item.file && typeof item.file.name === "string";
+      if (!hasName) continue;
+      const content = "content" in item && typeof item.content === "string" ? item.content : "";
+      normalized.push({
+        type: "file",
+        role,
+        id,
+        ts: safeTs,
+        content,
+        file: item.file as NonNullable<Extract<ChatEvent, { type: "file" }>["file"]>,
+        turnId,
+      });
+      continue;
+    }
+  }
+  return normalized;
+}
+
+function readEventsFromStorage(storageKey: string): ChatEvent[] {
+  const stored = window.localStorage.getItem(storageKey);
+  if (!stored) return [];
+  try {
+    return normalizeChatEvents(JSON.parse(stored));
+  } catch {
+    return [];
+  }
+}
+
+function mergeEvents(localEvents: ChatEvent[], cloudEvents: ChatEvent[]): ChatEvent[] {
+  const byId = new Map<string, ChatEvent>();
+  for (const event of [...localEvents, ...cloudEvents]) {
+    byId.set(event.id, event);
+  }
+  return [...byId.values()].sort((a, b) => a.ts - b.ts);
+}
+
+function mergeCoachPlans(localPlan: CoachPlan | null, cloudPlan: CoachPlan | null): CoachPlan | null {
+  if (!localPlan && !cloudPlan) return null;
+  if (!localPlan) return cloudPlan;
+  if (!cloudPlan) return localPlan;
+
+  const mergedToday = {
+    ...(localPlan.signals?.today ?? {}),
+    ...(cloudPlan.signals?.today ?? {}),
+  };
+  const signals: CoachPlan["signals"] =
+    typeof mergedToday.dateISO === "string" && mergedToday.dateISO
+      ? { today: { ...mergedToday, dateISO: mergedToday.dateISO } }
+      : undefined;
+
+  return {
+    ...localPlan,
+    ...cloudPlan,
+    physicalProfile: {
+      ...(localPlan.physicalProfile ?? {}),
+      ...(cloudPlan.physicalProfile ?? {}),
+    },
+    cognitiveProfile: {
+      ...(localPlan.cognitiveProfile ?? {}),
+      ...(cloudPlan.cognitiveProfile ?? {}),
+    } as CoachPlan["cognitiveProfile"],
+    goals: {
+      ...(localPlan.goals ?? {}),
+      ...(cloudPlan.goals ?? {}),
+    },
+    preferences: {
+      ...(localPlan.preferences ?? {}),
+      ...(cloudPlan.preferences ?? {}),
+    } as CoachPlan["preferences"],
+    ...(signals ? { signals } : {}),
+  };
 }
 
 

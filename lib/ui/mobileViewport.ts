@@ -8,11 +8,14 @@ export function bindAppViewportHeightVar(): () => void {
   const updateHeight = () => {
     const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
     const viewportTop = Math.max(0, window.visualViewport?.offsetTop ?? 0);
+    const keyboardLikelyOpen =
+      viewportTop > 0 || window.innerHeight - viewportHeight > 80;
     root.style.setProperty("--app-vh", `${Math.round(viewportHeight)}px`);
     root.style.setProperty("--app-vv-top", `${Math.round(viewportTop)}px`);
-    if (window.scrollY !== 0) {
-      window.scrollTo(0, 0);
-    }
+    root.style.setProperty(
+      "--composer-pad-bottom",
+      keyboardLikelyOpen ? "0px" : "calc(env(safe-area-inset-bottom) + 4px)"
+    );
   };
 
   updateHeight();
