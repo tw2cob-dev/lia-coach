@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -77,7 +77,7 @@ type AuthUser = {
 
 type ThemePreference = "light" | "dark" | "system";
 type SummaryCardKey = "food" | "activity" | "weight";
-type SummaryCardMode = "value" | "chart";
+type SummaryCardMode = "value" | "chart" | "hint";
 
 function isSelectedFileEvent(
   event: ChatEvent,
@@ -110,6 +110,7 @@ export default function ChatPage() {
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const activeUserId = authUser?.id ?? "anon";
   const activeChatStorageKey = getChatStorageKey(activeUserId);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -179,6 +180,50 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => bindAppViewportHeightVar(), []);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    let baselineHeight = viewport.height;
+
+    const isTextEditingTarget = (el: Element | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      if (el instanceof HTMLTextAreaElement) return true;
+      if (el instanceof HTMLInputElement) {
+        const type = (el.type || "text").toLowerCase();
+        return !["button", "checkbox", "radio", "file", "submit", "reset", "range", "color"].includes(type);
+      }
+      return el.isContentEditable;
+    };
+
+    const detectKeyboard = () => {
+      const activeElement = document.activeElement;
+      const isEditing = isTextEditingTarget(activeElement);
+      if (!isEditing && viewport.height > baselineHeight) {
+        baselineHeight = viewport.height;
+      }
+      const keyboardLikelyOpen = isEditing && baselineHeight - viewport.height > 80;
+      setIsKeyboardOpen(keyboardLikelyOpen);
+    };
+
+    detectKeyboard();
+    viewport.addEventListener("resize", detectKeyboard);
+    window.addEventListener("focusin", detectKeyboard);
+    window.addEventListener("focusout", detectKeyboard);
+    const handleOrientationChange = () => {
+      baselineHeight = viewport.height;
+      detectKeyboard();
+    };
+    window.addEventListener("orientationchange", handleOrientationChange);
+
+    return () => {
+      viewport.removeEventListener("resize", detectKeyboard);
+      window.removeEventListener("focusin", detectKeyboard);
+      window.removeEventListener("focusout", detectKeyboard);
+      window.removeEventListener("orientationchange", handleOrientationChange);
+    };
+  }, []);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -425,7 +470,7 @@ export default function ChatPage() {
     const reservation = reserveBudget(getEventText(eventToSend));
     if (!reservation) return false;
 
-    const turnId = crypto.randomUUID();
+    const turnId = createId();
     const userEvent = { ...eventToSend, turnId };
     const withUser = [...events, userEvent];
     setEvents(withUser);
@@ -500,7 +545,7 @@ export default function ChatPage() {
   };
     const sendPendingAttachment = async () => {
     if (!pendingAttachment) return false;
-    const turnId = crypto.randomUUID();
+    const turnId = createId();
 
     if (pendingAttachment.type === "image") {
       const imageEvent = createUserImageEvent({
@@ -753,10 +798,6 @@ export default function ChatPage() {
   const welcomeMessage = LIA_WELCOME_MESSAGE;
   const coachPlan = hasHydrated ? getCoachPlan() : null;
   const dashboardMetrics = useMemo(() => buildDashboardMetrics(events, coachPlan), [events, coachPlan]);
-  const summaryCopy =
-    summaryMode === "daily"
-      ? "Sin juicio. Sin castigo. Balance de hoy."
-      : "Sin juicio. Sin castigo. Balance de esta semana.";
   const summaryItems = useMemo(
     () =>
     summaryMode === "daily"
@@ -771,15 +812,15 @@ export default function ChatPage() {
             chart: dashboardMetrics.weekly.intakeKcal,
             hint:
               dashboardMetrics.daily.targetKcal !== null
-                ? `TMB ${dashboardMetrics.daily.basalKcal} · GET ${dashboardMetrics.daily.tdeeKcal} · conf. ${dashboardMetrics.daily.confidence}`
-                : "Comparte peso, altura, edad, sexo o actividad para calcular objetivo.",
+                ? `Base ${dashboardMetrics.daily.basalKcal} · GET ${dashboardMetrics.daily.tdeeKcal}`
+                : "Falta perfil.",
           },
           {
             key: "activity" as const,
             label: "Actividad",
             value: `${dashboardMetrics.daily.burnKcal} kcal`,
             chart: dashboardMetrics.weekly.burnKcal,
-            hint: "Incluye sesiones registradas y recurrentes.",
+            hint: "Sesiones registradas.",
           },
           {
             key: "weight" as const,
@@ -791,8 +832,8 @@ export default function ChatPage() {
             chart: dashboardMetrics.weekly.weightKg.map((value) => value ?? 0),
             hint:
               dashboardMetrics.daily.weightDeltaKg30d !== null
-                ? `Progreso 30d: ${dashboardMetrics.daily.weightDeltaKg30d > 0 ? "+" : ""}${dashboardMetrics.daily.weightDeltaKg30d} kg`
-                : "Aún sin progreso calculable",
+                ? `30d: ${dashboardMetrics.daily.weightDeltaKg30d > 0 ? "+" : ""}${dashboardMetrics.daily.weightDeltaKg30d} kg`
+                : "Sin tendencia",
           },
         ]
       : [
@@ -804,14 +845,14 @@ export default function ChatPage() {
                 ? `${sumSeries(dashboardMetrics.weekly.intakeKcal)} / ${dashboardMetrics.daily.targetKcal * 7} kcal sem`
                 : "Sin datos",
             chart: dashboardMetrics.weekly.intakeKcal,
-            hint: "Consumo semanal acumulado.",
+            hint: "Total semanal.",
           },
           {
             key: "activity" as const,
             label: "Actividad",
             value: `${sumSeries(dashboardMetrics.weekly.burnKcal)} kcal sem`,
             chart: dashboardMetrics.weekly.burnKcal,
-            hint: "Gasto por ejercicio semanal.",
+            hint: "Gasto semanal.",
           },
           {
             key: "weight" as const,
@@ -823,8 +864,8 @@ export default function ChatPage() {
             chart: dashboardMetrics.weekly.weightKg.map((value) => value ?? 0),
             hint:
               dashboardMetrics.daily.weightDeltaKg30d !== null
-                ? `Delta 30d: ${dashboardMetrics.daily.weightDeltaKg30d > 0 ? "+" : ""}${dashboardMetrics.daily.weightDeltaKg30d} kg`
-                : "Sin delta",
+                ? `30d: ${dashboardMetrics.daily.weightDeltaKg30d > 0 ? "+" : ""}${dashboardMetrics.daily.weightDeltaKg30d} kg`
+                : "Sin tendencia",
           },
         ],
     [dashboardMetrics, summaryMode]
@@ -833,25 +874,46 @@ export default function ChatPage() {
   const toggleSummaryCardMode = (key: SummaryCardKey) => {
     setSummaryCardModes((prev) => ({
       ...prev,
-      [key]: prev[key] === "value" ? "chart" : "value",
+      [key]:
+        prev[key] === "value"
+          ? "chart"
+          : prev[key] === "chart"
+          ? "hint"
+          : "value",
     }));
   };
 
   return (
     <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
-      <div className="mx-auto flex h-full max-w-[440px] flex-col overflow-hidden px-5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+1rem)]">
+      <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-0 pt-[calc(env(safe-area-inset-top)+1rem)]">
         <header className="shrink-0 flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">LIA Coach</p>
-            <h1 className="font-display text-2xl font-medium text-slate-900">Hoy {dateLabel}</h1>
+          <div className="min-w-0 pl-1">
+            <h1 className={`font-display truncate text-slate-900 ${isKeyboardOpen ? "text-xl" : "text-2xl"}`}>
+              <span className="text-[0.9em] font-medium uppercase tracking-[0.18em] text-slate-300">LIA</span>
+            </h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="soft-pill pro-pill rounded-full px-3 py-1 text-xs font-semibold text-slate-700"
-            >
-              Plan Pro
-            </button>
+            <div className={`summary-switch inline-flex shrink-0 rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm ${isKeyboardOpen ? "hidden" : ""}`}>
+              <button
+                type="button"
+                onClick={() => setSummaryMode("daily")}
+                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
+                  summaryMode === "daily" ? "is-active bg-slate-900 text-white" : "text-slate-600"
+                }`}
+              >
+                Diario
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryMode("weekly")}
+                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
+                  summaryMode === "weekly" ? "is-active bg-slate-900 text-white" : "text-slate-600"
+                }`}
+              >
+                Semanal
+              </button>
+            </div>
+            <p className="truncate text-sm font-medium leading-none text-slate-400">{dateLabel}</p>
             <div className="relative" ref={profilePanelRef}>
               <button
                 type="button"
@@ -888,6 +950,13 @@ export default function ChatPage() {
                   </div>
 
                   <div className="mt-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Plan</p>
+                    <div className="mt-2 inline-flex rounded-full bg-slate-100 p-1 text-[11px] font-semibold">
+                      <span className="rounded-full bg-slate-900 px-3 py-1 text-white">Pro</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Tema</p>
                     <div className="mt-2 inline-flex rounded-full bg-slate-100 p-1 text-[11px] font-semibold">
                       {([
@@ -916,7 +985,7 @@ export default function ChatPage() {
                     onClick={handleLogout}
                     className="mt-4 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700"
                   >
-                    Cerrar sesión
+                    Cerrar sesiÃ³n
                   </button>
                 </div>
               )}
@@ -924,56 +993,35 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <section className="glass-card summary-card mt-5 shrink-0 rounded-3xl p-4">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Resumen rapido</p>
-              <p className="mt-2 text-sm text-slate-700">{summaryCopy}</p>
-            </div>
-            <div className="summary-switch inline-flex rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm">
-              <button
-                type="button"
-                onClick={() => setSummaryMode("daily")}
-                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
-                  summaryMode === "daily" ? "is-active bg-slate-900 text-white" : "text-slate-600"
-                }`}
-              >
-                Diario
-              </button>
-              <button
-                type="button"
-                onClick={() => setSummaryMode("weekly")}
-                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
-                  summaryMode === "weekly" ? "is-active bg-slate-900 text-white" : "text-slate-600"
-                }`}
-              >
-                Semanal
-              </button>
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-3">
+        <section className={`summary-shell glass-card summary-card mt-1 shrink-0 rounded-[20px] p-2 ${isKeyboardOpen ? "hidden" : ""}`}>
+          <div className="grid grid-cols-3 items-start gap-2">
             {summaryItems.map((item) => (
               <button
                 key={item.label}
                 type="button"
                 onClick={() => toggleSummaryCardMode(item.key)}
-                className="summary-metric rounded-2xl bg-white/70 p-3 text-left text-xs"
+                className="summary-metric flex min-h-[64px] flex-col rounded-[14px] bg-white/70 px-2 py-2 text-left text-xs"
               >
-                <p className="text-slate-400">{item.label}</p>
-                {summaryCardModes[item.key] === "value" ? (
-                  <p className="mt-2 text-sm font-semibold text-slate-800">{item.value}</p>
-                ) : (
-                  <div className="mt-2">
+                <p className="h-3 text-[10px] uppercase leading-none tracking-[0.1em] text-slate-400">
+                  {item.label}
+                </p>
+                <div className="mt-1 flex min-h-6 items-start">
+                  {summaryCardModes[item.key] === "value" ? (
+                    <p className="overflow-hidden text-sm leading-tight font-semibold text-slate-800">
+                      {item.value}
+                    </p>
+                  ) : summaryCardModes[item.key] === "hint" ? (
+                    <p className="text-[10px] leading-snug text-slate-500">{item.hint}</p>
+                  ) : (
                     <MiniBarChart values={item.chart} />
-                  </div>
-                )}
-                <p className="mt-1 text-[10px] text-slate-500">{item.hint}</p>
+                  )}
+                </div>
               </button>
             ))}
           </div>
         </section>
 
-        <section className="glass-card chat-card mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-2">
+        <section className="glass-card chat-card mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-1">
           {authUser?.isSuperAdmin && (
             <div className="flex justify-end gap-3">
               <button
@@ -997,7 +1045,7 @@ export default function ChatPage() {
             <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
               <p className="font-semibold text-slate-900">Debug IA</p>
               {!lastAIDebug ? (
-                <p className="mt-2 text-slate-500">Sin datos aún. Envía un mensaje.</p>
+                <p className="mt-2 text-slate-500">Sin datos aÃºn. EnvÃ­a un mensaje.</p>
               ) : (
                 <div className="mt-2 space-y-2">
                   <p>
@@ -1036,9 +1084,9 @@ export default function ChatPage() {
           <main
             ref={scrollRef}
             onScroll={handleScroll}
-            className="chat-scroll mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           >
-            <ul className="message-list px-2 pb-4">
+            <ul className="message-list px-1 pb-1">
               <li className="message-row">
                 <div className="message-item welcome-bubble w-full max-w-none px-2 py-2 text-sm">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
@@ -1075,9 +1123,9 @@ export default function ChatPage() {
                     }`}
                   >
                     <div
-                      className={`message-item px-2 py-2 text-sm transition ${
+                      className={`message-item px-1 py-2 text-sm transition ${
                         message.role === "user"
-                          ? "user-bubble ml-auto max-w-[85%]"
+                          ? "user-bubble ml-auto max-w-[92%]"
                           : "assistant-bubble w-full max-w-none"
                       } ${isSelected ? "ring-1 ring-slate-200" : ""}`}
                     >
@@ -1174,7 +1222,7 @@ export default function ChatPage() {
                       : ""
                   }`}
                 >
-                  <div className="message-item assistant-bubble w-full max-w-none px-2 py-2 text-sm">
+                  <div className="message-item assistant-bubble w-full max-w-none px-1 py-2 text-sm">
                   {streamingText ? (
                     <p className="whitespace-pre-wrap leading-relaxed">
                       {renderFormattedText(streamingText)}
@@ -1193,7 +1241,7 @@ export default function ChatPage() {
               event.preventDefault();
               void handleSubmit();
             }}
-            className="composer-wrap mt-2 border-t border-white/70 pt-2"
+            className="composer-wrap mt-0 border-t border-white/70 pt-1"
           >
             {selectedFileIds.length > 0 && (
               <div className="composer-chip mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
@@ -1274,30 +1322,32 @@ export default function ChatPage() {
               </div>
             )}
 
-            <div className="composer-shell flex items-end gap-2 rounded-2xl border border-white/70 bg-white/70 p-2 shadow-sm">
+            <div className="composer-shell flex items-center gap-1.5 rounded-[22px] border border-white/70 bg-white/70 p-2 shadow-sm">
               <button
                 type="button"
                 onClick={() => attachInputRef.current?.click()}
-                className="composer-icon-btn flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-600 shadow-sm"
+                className="composer-icon-btn flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm"
                 disabled={isStreaming}
                 aria-label="Adjuntar"
               >
                 +
               </button>
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Escribe aquí..."
-                className="max-h-[168px] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-800 outline-none"
-                rows={1}
-                disabled={isStreaming}
-              />
+              <div className="composer-input-track flex flex-1 items-center rounded-full px-2">
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Escribe aquí..."
+                  className="composer-textarea max-h-[168px] min-h-10 w-full resize-none bg-transparent px-2 py-2 text-[15px] text-slate-800 outline-none"
+                  rows={1}
+                  disabled={isStreaming}
+                />
+              </div>
               <button
                 type="button"
                 onClick={handleVoiceToggle}
-                className={`composer-icon-btn flex h-10 w-10 items-center justify-center rounded-xl border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
+                className={`composer-icon-btn flex h-10 w-10 items-center justify-center rounded-full border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
                   isRecording ? "ring-2 ring-red-300 text-red-500" : ""
                 }`}
                 disabled={isStreaming}
@@ -1324,11 +1374,27 @@ export default function ChatPage() {
                 </svg>
               </button>
               <button
-                type="submit"
-                className="composer-send-btn cta-gradient flex h-10 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white shadow-sm"
+                type="button"
+                onClick={() => {
+                  void handleSubmit();
+                }}
+                className="composer-send-btn cta-gradient flex h-10 items-center justify-center gap-1 rounded-full px-3 text-sm font-semibold text-white shadow-sm"
                 disabled={isStreaming}
+                aria-label="Enviar"
               >
-                Enviar
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="h-4 w-4"
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h13" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m12 5 7 7-7 7" />
+                </svg>
+                <span className="text-xs">Enviar</span>
               </button>
             </div>
           </form>
@@ -1412,10 +1478,31 @@ function sumSeries(values: number[]): number {
   return values.reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
 }
 
+function createId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function MiniBarChart({ values }: { values: number[] }) {
   const max = Math.max(1, ...values.map((value) => Math.max(0, value)));
   return (
-    <div className="flex h-10 items-end gap-1">
+    <div className="flex h-8 items-end gap-1">
       {values.map((value, index) => {
         const safe = Math.max(0, value);
         const ratio = safe / max;
@@ -1514,10 +1601,10 @@ function buildBudgetNotice(state: BudgetState, reason: "tokens" | "messages" | "
   const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
   const reasonLine =
     reason === "tokens"
-      ? "Has alcanzado el límite diario de tokens."
+      ? "Has alcanzado el lÃ­mite diario de tokens."
       : reason === "messages"
-      ? "Has alcanzado el límite diario de mensajes."
-      : "Has alcanzado el límite diario de coste.";
+      ? "Has alcanzado el lÃ­mite diario de mensajes."
+      : "Has alcanzado el lÃ­mite diario de coste.";
   return `${reasonLine} ${tokensLine}. ${messagesLine}. ${costLine}.`;
 }
 
@@ -1567,6 +1654,7 @@ function extractAssistantIntakeKcal(text: string): number | null {
   if (!Number.isFinite(value) || value < 200 || value > 8000) return null;
   return value;
 }
+
 
 
 
