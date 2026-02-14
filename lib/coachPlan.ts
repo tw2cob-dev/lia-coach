@@ -108,7 +108,7 @@ function normalizeCoachPlan(input: unknown): CoachPlan | null {
   const metadata = normalizeMetadata(raw.metadata);
 
   return {
-    physicalProfile,
+    ...(physicalProfile ? { physicalProfile } : {}),
     cognitiveProfile,
     goals,
     preferences,

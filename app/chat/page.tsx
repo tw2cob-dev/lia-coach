@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { onAuthStateChanged, signOut as firebaseSignOut } from "firebase/auth";
@@ -32,6 +32,11 @@ const BUDGET_STORAGE_PREFIX = "lia-chat-budget";
 const COACH_PLAN_STORAGE_KEY = "lia-coach-plan";
 const LEGACY_CHAT_MESSAGES_KEY = "lia-chat-messages";
 const SCROLL_THRESHOLD_PX = 80;
+const CHAT_TO_COMPOSER_GAP_PX = 2;
+const COMPOSER_CLEARANCE_REDUCTION_CLOSED_PX = 30;
+const COMPOSER_CLEARANCE_REDUCTION_FOCUSED_PX = 44;
+const COMPOSER_CLEARANCE_OFFSET_CLOSED_PX = 15;
+const COMPOSER_CLEARANCE_OFFSET_FOCUSED_PX = -5;
 const MAX_TEXTAREA_LINES = 2;
 const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
@@ -115,6 +120,7 @@ export default function ChatPage() {
   const [streamingText, setStreamingText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const [pendingNote, setPendingNote] = useState("");
   const [expandedSummaries, setExpandedSummaries] = useState<Record<string, boolean>>({});
@@ -134,6 +140,7 @@ export default function ChatPage() {
   const [, setCoachPlanVersion] = useState(0);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
   const [isViewportDebugEnabled, setIsViewportDebugEnabled] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(64);
   const [viewportCopyFallbackText, setViewportCopyFallbackText] = useState("");
   const [viewportDebug, setViewportDebug] = useState<ViewportDebugSnapshot>({
     innerHeight: 0,
@@ -158,6 +165,8 @@ export default function ChatPage() {
   const profilePanelRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const baseComposerHeightRef = useRef<number | null>(null);
   const viewportLogRef = useRef<string[]>([]);
   const viewportDebugTapCountRef = useRef(0);
   const viewportDebugTapTimerRef = useRef<number | null>(null);
@@ -217,10 +226,6 @@ export default function ChatPage() {
 
     return () => unsubscribe();
   }, [router]);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
 
   useEffect(() => bindAppViewportHeightVar(), []);
 
@@ -318,10 +323,10 @@ export default function ChatPage() {
   }, [isViewportDebugEnabled]);
 
   useEffect(() => {
-    if (!isStreaming) {
+    if (!isStreaming && isComposerFocused) {
       inputRef.current?.focus();
     }
-  }, [isStreaming]);
+  }, [isStreaming, isComposerFocused]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -332,10 +337,40 @@ export default function ChatPage() {
 
   useEffect(() => {
     return () => {
+      if (scrollRafRef.current !== null) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+      }
       if (viewportDebugTapTimerRef.current !== null) {
         window.clearTimeout(viewportDebugTapTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const composerEl = composerRef.current;
+    if (!composerEl) return;
+
+    const measureComposerHeight = () => {
+      const next = Math.round(composerEl.getBoundingClientRect().height);
+      if (next <= 0) return;
+      if (baseComposerHeightRef.current === null) {
+        baseComposerHeightRef.current = next;
+        setComposerHeight(next);
+        return;
+      }
+      const capped = Math.min(next, baseComposerHeightRef.current + 2);
+      setComposerHeight(capped);
+    };
+
+    measureComposerHeight();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      measureComposerHeight();
+    });
+    observer.observe(composerEl);
+
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -449,11 +484,6 @@ export default function ChatPage() {
   }, [activeChatStorageKey, authUser?.id]);
 
   useEffect(() => {
-    if (!autoScrollEnabled) return;
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [events, streamingText, autoScrollEnabled]);
-
-  useEffect(() => {
     adjustTextareaHeight();
   }, [input, isStreaming]);
 
@@ -476,6 +506,41 @@ export default function ChatPage() {
     const nearBottom = distanceFromBottom <= SCROLL_THRESHOLD_PX;
     setAutoScrollEnabled(nearBottom);
   };
+
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const container = scrollRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+  }, []);
+
+  const scheduleScrollToBottom = useCallback(() => {
+    if (scrollRafRef.current !== null) {
+      window.cancelAnimationFrame(scrollRafRef.current);
+    }
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      scrollChatToBottom();
+    });
+  }, [scrollChatToBottom]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled && !isComposerFocused) return;
+    scheduleScrollToBottom();
+  }, [events, streamingText, autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (!isComposerFocused) return;
+    const onViewportChange = () => scheduleScrollToBottom();
+    const vv = window.visualViewport;
+    window.addEventListener("resize", onViewportChange);
+    vv?.addEventListener("resize", onViewportChange);
+    vv?.addEventListener("scroll", onViewportChange);
+    return () => {
+      window.removeEventListener("resize", onViewportChange);
+      vv?.removeEventListener("resize", onViewportChange);
+      vv?.removeEventListener("scroll", onViewportChange);
+    };
+  }, [isComposerFocused, scheduleScrollToBottom]);
 
   const adjustTextareaHeight = () => {
     const el = inputRef.current;
@@ -839,6 +904,8 @@ export default function ChatPage() {
   };
     const handleSubmit = async () => {
     if (isStreaming) return;
+    setAutoScrollEnabled(true);
+    scheduleScrollToBottom();
     const trimmed = input.trim();
 
     if (pendingAttachment) {
@@ -1023,6 +1090,18 @@ export default function ChatPage() {
 
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;
   const selectedFiles = events.filter((event) => isSelectedFileEvent(event, selectedFileIds));
+  const composerClearanceBasePx =
+    composerHeight -
+    (isComposerFocused
+      ? COMPOSER_CLEARANCE_REDUCTION_FOCUSED_PX
+      : COMPOSER_CLEARANCE_REDUCTION_CLOSED_PX);
+  const composerClearancePx = Math.max(
+    0,
+    composerClearanceBasePx +
+      (isComposerFocused
+        ? COMPOSER_CLEARANCE_OFFSET_FOCUSED_PX
+        : COMPOSER_CLEARANCE_OFFSET_CLOSED_PX)
+  );
   const dateLabel = buildDateLabel();
   const welcomeMessage = LIA_WELCOME_MESSAGE;
   const coachPlan = hasHydrated ? getCoachPlan() : null;
@@ -1380,7 +1459,8 @@ export default function ChatPage() {
           <main
             ref={scrollRef}
             onScroll={handleScroll}
-            className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain pb-28 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            style={{ paddingBottom: `${composerClearancePx}px` }}
           >
             <ul className="message-list px-1 pb-1">
               <li className="message-row">
@@ -1530,7 +1610,7 @@ export default function ChatPage() {
                 </li>
               )}
             </ul>
-            <div ref={endRef} />
+            <div ref={endRef} style={{ height: `${CHAT_TO_COMPOSER_GAP_PX}px` }} />
           </main>
           <form
             ref={composerRef}
@@ -1634,6 +1714,14 @@ export default function ChatPage() {
                   ref={inputRef}
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
+                  onFocus={() => {
+                    setIsComposerFocused(true);
+                    setAutoScrollEnabled(true);
+                    scheduleScrollToBottom();
+                  }}
+                  onBlur={() => {
+                    setIsComposerFocused(false);
+                  }}
                   onKeyDown={handleKeyDown}
                   placeholder="Escribe aquí..."
                   className="composer-textarea min-h-10 w-full resize-none bg-transparent px-2 py-2 text-[15px] text-slate-800 outline-none"
@@ -1641,41 +1729,43 @@ export default function ChatPage() {
                   disabled={isStreaming}
                 />
               </div>
-              <button
-                type="button"
-                onClick={handleVoiceToggle}
-                className={`composer-icon-btn flex h-10 w-10 items-center justify-center rounded-full border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
-                  isRecording ? "ring-2 ring-red-300 text-red-500" : ""
-                }`}
-                disabled={isStreaming}
-                aria-label={isRecording ? "Detener grabacion" : "Grabar voz"}
-                title={isRecording ? "Detener grabacion" : "Grabar voz"}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  className="h-5 w-5"
-                  aria-hidden="true"
+              {!isComposerFocused && (
+                <button
+                  type="button"
+                  onClick={handleVoiceToggle}
+                  className={`composer-icon-btn flex h-10 w-10 items-center justify-center rounded-full border border-white/70 bg-white/85 text-slate-600 shadow-sm ${
+                    isRecording ? "ring-2 ring-red-300 text-red-500" : ""
+                  }`}
+                  disabled={isStreaming}
+                  aria-label={isRecording ? "Detener grabacion" : "Grabar voz"}
+                  title={isRecording ? "Detener grabacion" : "Grabar voz"}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 3.5a3.5 3.5 0 0 0-3.5 3.5v5a3.5 3.5 0 1 0 7 0V7A3.5 3.5 0 0 0 12 3.5Z"
-                  />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 11.5a5.5 5.5 0 0 0 11 0" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 17v3.5" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 20.5h5" />
-                </svg>
-              </button>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    className="h-5 w-5"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 3.5a3.5 3.5 0 0 0-3.5 3.5v5a3.5 3.5 0 1 0 7 0V7A3.5 3.5 0 0 0 12 3.5Z"
+                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 11.5a5.5 5.5 0 0 0 11 0" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 17v3.5" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 20.5h5" />
+                  </svg>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   void handleSubmit();
                 }}
-                className="composer-send-btn cta-gradient flex h-10 items-center justify-center gap-1 rounded-full px-3 text-sm font-semibold text-white shadow-sm"
+                className="composer-send-btn cta-gradient flex h-10 w-10 items-center justify-center rounded-full text-white shadow-sm"
                 disabled={isStreaming}
                 aria-label="Enviar"
               >
@@ -1691,7 +1781,6 @@ export default function ChatPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h13" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="m12 5 7 7-7 7" />
                 </svg>
-                <span className="text-xs">Enviar</span>
               </button>
             </div>
           </form>

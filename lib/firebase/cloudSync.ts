@@ -17,6 +17,21 @@ type CloudChatStateDoc = {
   updatedAtMs?: number;
 };
 
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item)) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (nested === undefined) continue;
+    out[key] = stripUndefinedDeep(nested);
+  }
+  return out as T;
+}
+
 function getUserChatStateRef(userId: string) {
   const db = getFirebaseDb();
   return doc(db, CHAT_STATE_COLLECTION, userId);
@@ -68,12 +83,12 @@ export function subscribeCloudChatState(
 export async function saveCloudChatState(userId: string, state: Omit<CloudChatState, "updatedAtMs">) {
   await setDoc(
     getUserChatStateRef(userId),
-    {
+    stripUndefinedDeep({
       events: state.events,
       coachPlan: state.coachPlan ?? null,
       updatedAtMs: Date.now(),
       updatedAt: serverTimestamp(),
-    },
+    }),
     { merge: true }
   );
 }

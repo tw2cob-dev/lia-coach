@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { classifyMessage, extractWeight } from "../../lib/parsing";
+import { bindAppViewportHeightVar } from "../../lib/ui/mobileViewport";
 
 type ChatMessage = {
   id: string;
@@ -13,6 +14,8 @@ const storageKey = "lia-chat-messages";
 
 export default function LogPage() {
   const [messages] = useState<ChatMessage[]>(() => loadStoredMessages());
+
+  useEffect(() => bindAppViewportHeightVar(), []);
 
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -43,27 +46,37 @@ export default function LogPage() {
   if (foodCount > 0) summaryParts.push(`${foodCount} comidas`);
   if (trainingCount > 0) summaryParts.push(`${trainingCount} entrenos`);
   if (lastWeight !== null) summaryParts.push(`peso ${lastWeight} kg`);
-  const summaryText = summaryParts.length > 0 ? `Hoy: ${summaryParts.join(" · ")}` : null;
+  const summaryText = summaryParts.length > 0 ? `Hoy: ${summaryParts.join(" � ")}` : null;
 
   return (
-    <div className="min-h-screen bg-zinc-50 px-4 py-6 text-zinc-900">
-      <h1 className="text-lg font-semibold">Log de hoy</h1>
-      {summaryText && (
-        <p className="mt-3 text-sm text-zinc-600">{summaryText}</p>
-      )}
-      <ul className="mt-4 space-y-3">
-        {todaysMessages.map((message) => (
-          <li key={message.id} className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm shadow-sm">
-            <span className="mr-3 text-xs uppercase tracking-wide text-zinc-500">
-              {new Date(message.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-            </span>
-            <span>{message.text}</span>
-          </li>
-        ))}
-      </ul>
-      {todaysMessages.length === 0 && (
-        <p className="mt-4 text-sm text-zinc-500">Hoy no hay registros todavía.</p>
-      )}
+    <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
+      <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1rem)]">
+        <div className="glass-card flex min-h-0 flex-1 flex-col rounded-3xl p-4">
+          <h1 className="text-lg font-semibold">Log de hoy</h1>
+          {summaryText && <p className="mt-3 text-sm text-slate-600">{summaryText}</p>}
+          <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+            <ul className="space-y-3">
+              {todaysMessages.map((message) => (
+                <li
+                  key={message.id}
+                  className="rounded-2xl border border-white/70 bg-white/85 px-4 py-3 text-sm shadow-sm"
+                >
+                  <span className="mr-3 text-xs uppercase tracking-wide text-slate-500">
+                    {new Date(message.ts).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <span>{message.text}</span>
+                </li>
+              ))}
+            </ul>
+            {todaysMessages.length === 0 && (
+              <p className="text-sm text-slate-500">Hoy no hay registros todavia.</p>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

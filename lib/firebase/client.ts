@@ -1,6 +1,8 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { Firestore, getFirestore, initializeFirestore } from "firebase/firestore";
+
+let cachedDb: Firestore | null = null;
 
 function readEnv(name: string): string {
   let value: string | undefined;
@@ -35,5 +37,11 @@ export function getFirebaseDb() {
   };
 
   const app = getApps().length ? getApp() : initializeApp(config);
-  return getFirestore(app);
+  if (cachedDb) return cachedDb;
+  try {
+    cachedDb = initializeFirestore(app, { ignoreUndefinedProperties: true });
+  } catch {
+    cachedDb = getFirestore(app);
+  }
+  return cachedDb;
 }

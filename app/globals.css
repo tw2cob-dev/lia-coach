@@ -203,6 +203,7 @@ body {
   box-shadow: none;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  overflow-anchor: none;
 }
 
 .assistant-bubble {
