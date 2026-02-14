@@ -1248,7 +1248,7 @@ export default function ChatPage() {
           </div>
         </section>
 
-        <section className="glass-card chat-card mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-1">
+        <section className="glass-card chat-card relative mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-1">
           {authUser?.isSuperAdmin && (
             <div className="flex justify-end gap-3">
               <button
@@ -1370,7 +1370,7 @@ export default function ChatPage() {
           <main
             ref={scrollRef}
             onScroll={handleScroll}
-            className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain pb-28 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           >
             <ul className="message-list px-1 pb-1">
               <li className="message-row">
@@ -1528,7 +1528,7 @@ export default function ChatPage() {
               event.preventDefault();
               void handleSubmit();
             }}
-            className="composer-wrap mt-0 border-t border-white/70 pt-1"
+            className="composer-wrap absolute inset-x-1 bottom-0 z-20 mt-0 pt-1"
           >
             {selectedFileIds.length > 0 && (
               <div className="composer-chip mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
