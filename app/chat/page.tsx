@@ -32,7 +32,7 @@ const BUDGET_STORAGE_PREFIX = "lia-chat-budget";
 const COACH_PLAN_STORAGE_KEY = "lia-coach-plan";
 const LEGACY_CHAT_MESSAGES_KEY = "lia-chat-messages";
 const SCROLL_THRESHOLD_PX = 80;
-const MAX_TEXTAREA_HEIGHT_PX = 168;
+const MAX_TEXTAREA_LINES = 2;
 const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
 const MAX_SELECTED_FILES = 3;
@@ -480,10 +480,20 @@ export default function ChatPage() {
   const adjustTextareaHeight = () => {
     const el = inputRef.current;
     if (!el) return;
+    const style = window.getComputedStyle(el);
+    const lineHeightRaw = Number.parseFloat(style.lineHeight || "");
+    const lineHeight = Number.isFinite(lineHeightRaw) && lineHeightRaw > 0 ? lineHeightRaw : 20;
+    const verticalChrome =
+      Number.parseFloat(style.paddingTop || "0") +
+      Number.parseFloat(style.paddingBottom || "0") +
+      Number.parseFloat(style.borderTopWidth || "0") +
+      Number.parseFloat(style.borderBottomWidth || "0");
+    const maxHeight = Math.ceil(lineHeight * MAX_TEXTAREA_LINES + verticalChrome);
+
     el.style.height = "auto";
-    const nextHeight = Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
     el.style.height = `${nextHeight}px`;
-    el.style.overflowY = el.scrollHeight > MAX_TEXTAREA_HEIGHT_PX ? "auto" : "hidden";
+    el.style.overflowY = "hidden";
   };
 
   const resetTextareaHeight = () => {
@@ -1626,7 +1636,7 @@ export default function ChatPage() {
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Escribe aquí..."
-                  className="composer-textarea max-h-[168px] min-h-10 w-full resize-none bg-transparent px-2 py-2 text-[15px] text-slate-800 outline-none"
+                  className="composer-textarea min-h-10 w-full resize-none bg-transparent px-2 py-2 text-[15px] text-slate-800 outline-none"
                   rows={1}
                   disabled={isStreaming}
                 />

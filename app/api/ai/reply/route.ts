@@ -54,7 +54,15 @@ export async function POST(request: Request) {
     });
 
     if (!response.ok) {
-      return NextResponse.json({ error: "Upstream AI error." }, { status: 502 });
+      const upstream = await readUpstreamError(response);
+      return NextResponse.json(
+        {
+          error: upstream.message,
+          upstreamStatus: response.status,
+          upstreamCode: upstream.code ?? null,
+        },
+        { status: mapUpstreamStatus(response.status) },
+      );
     }
 
     const data = (await response.json()) as {
@@ -90,4 +98,24 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Unexpected error." }, { status: 500 });
   }
+}
+
+async function readUpstreamError(response: Response): Promise<{ message: string; code?: string }> {
+  try {
+    const payload = (await response.json()) as {
+      error?: { message?: string; code?: string; type?: string };
+    };
+    const message = payload.error?.message?.trim() ?? "";
+    const code = payload.error?.code?.trim() ?? payload.error?.type?.trim();
+    if (message) return { message, code };
+  } catch {
+    // Fall back to generic messages below.
+  }
+  return { message: "OpenAI request failed." };
+}
+
+function mapUpstreamStatus(status: number): number {
+  if (status === 401 || status === 403) return 500;
+  if (status === 429) return 503;
+  return 502;
 }

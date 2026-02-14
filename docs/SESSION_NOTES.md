@@ -24,6 +24,7 @@ Last updated: 2026-02-13
 1. Command 1
 2. Command 2
 - If a step is not a command (example: press Ctrl + C), call it out explicitly.
+- Environment config: use Windows environment variables; do not rely on `.env.local`.
 
 ## Current Auth Decisions
 - Auth provider: Firebase (Email/Password + email verification).
