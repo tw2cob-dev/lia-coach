@@ -142,6 +142,7 @@ export default function ChatPage() {
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
   const [isViewportDebugEnabled, setIsViewportDebugEnabled] = useState(false);
   const [viewportCopyFallbackText, setViewportCopyFallbackText] = useState("");
+  const [topChromeHeight, setTopChromeHeight] = useState(140);
   const [viewportDebug, setViewportDebug] = useState<ViewportDebugSnapshot>({
     innerHeight: 0,
     outerHeight: 0,
@@ -168,6 +169,7 @@ export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const profilePanelRef = useRef<HTMLDivElement | null>(null);
+  const topChromeRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -393,6 +395,20 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    const node = topChromeRef.current;
+    if (!node) return;
+    const measure = () => {
+      const h = Math.round(node.getBoundingClientRect().height);
+      if (h > 0) setTopChromeHeight(h);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = (pref: ThemePreference) => {
       const resolved = pref === "system" ? (media.matches ? "dark" : "light") : pref;
@@ -543,23 +559,9 @@ export default function ChatPage() {
   }, [scrollChatToBottom]);
 
   useEffect(() => {
-    if (!autoScrollEnabled && !isComposerFocused) return;
+    if (!autoScrollEnabled) return;
     scheduleScrollToBottom();
-  }, [events, streamingText, autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
-
-  useEffect(() => {
-    if (!isComposerFocused) return;
-    const onViewportChange = () => scheduleScrollToBottom();
-    const vv = window.visualViewport;
-    window.addEventListener("resize", onViewportChange);
-    vv?.addEventListener("resize", onViewportChange);
-    vv?.addEventListener("scroll", onViewportChange);
-    return () => {
-      window.removeEventListener("resize", onViewportChange);
-      vv?.removeEventListener("resize", onViewportChange);
-      vv?.removeEventListener("scroll", onViewportChange);
-    };
-  }, [isComposerFocused, scheduleScrollToBottom]);
+  }, [events, streamingText, autoScrollEnabled, scheduleScrollToBottom]);
 
   const adjustTextareaHeight = () => {
     const el = inputRef.current;
@@ -1202,9 +1204,26 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="app-bg h-[100lvh] overflow-hidden text-slate-900">
-      <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-[env(safe-area-inset-bottom)] pt-[calc(env(safe-area-inset-top)+1rem)]">
-        <header ref={headerRef} className="sticky top-0 z-20 shrink-0 flex items-center justify-between">
+    <div
+      className="app-bg overflow-hidden text-slate-900"
+      style={{
+        height: "100lvh",
+        minHeight: "100lvh",
+      }}
+    >
+      <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-0">
+        <div
+          aria-hidden
+          className="top-chrome-bg fixed inset-x-0 top-0 z-39 pointer-events-none"
+          style={{
+            height: `calc(var(--app-vv-top) + env(safe-area-inset-top) + ${topChromeHeight + 16}px)`,
+          }}
+        />
+        <div
+          ref={topChromeRef}
+          className="top-chrome-bg fixed inset-x-0 top-[calc(var(--app-vv-top)+env(safe-area-inset-top))] z-40 px-3"
+        >
+          <header ref={headerRef} className="mx-auto flex w-full max-w-[520px] items-center justify-between">
           <div className="min-w-0 pl-1">
             <h1 className="font-display truncate text-2xl text-slate-900">
               <button
@@ -1317,35 +1336,41 @@ export default function ChatPage() {
               )}
             </div>
           </div>
-        </header>
+          </header>
 
-        <section className="summary-shell glass-card summary-card mt-1 shrink-0 rounded-[20px] p-2">
-          <div className="grid grid-cols-3 items-start gap-2">
-            {summaryItems.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => toggleSummaryCardMode(item.key)}
-                className="summary-metric flex min-h-[64px] flex-col rounded-[14px] bg-white/70 px-2 py-2 text-left text-xs"
-              >
-                <p className="h-3 text-[10px] uppercase leading-none tracking-[0.1em] text-slate-400">
-                  {item.label}
-                </p>
-                <div className="mt-1 flex min-h-6 items-start">
-                  {summaryCardModes[item.key] === "value" ? (
-                    <p className="overflow-hidden text-sm leading-tight font-semibold text-slate-800">
-                      {item.value}
-                    </p>
-                  ) : summaryCardModes[item.key] === "hint" ? (
-                    <p className="text-[10px] leading-snug text-slate-500">{item.hint}</p>
-                  ) : (
-                    <MiniBarChart values={item.chart} />
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
+          <section className="summary-shell glass-card summary-card mt-1 mx-auto w-full max-w-[520px] rounded-[20px] p-2">
+            <div className="grid grid-cols-3 items-start gap-2">
+              {summaryItems.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => toggleSummaryCardMode(item.key)}
+                  className="summary-metric flex min-h-[64px] flex-col rounded-[14px] bg-white/70 px-2 py-2 text-left text-xs"
+                >
+                  <p className="h-3 text-[10px] uppercase leading-none tracking-[0.1em] text-slate-400">
+                    {item.label}
+                  </p>
+                  <div className="mt-1 flex min-h-6 items-start">
+                    {summaryCardModes[item.key] === "value" ? (
+                      <p className="overflow-hidden text-sm leading-tight font-semibold text-slate-800">
+                        {item.value}
+                      </p>
+                    ) : summaryCardModes[item.key] === "hint" ? (
+                      <p className="text-[10px] leading-snug text-slate-500">{item.hint}</p>
+                    ) : (
+                      <MiniBarChart values={item.chart} />
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+        <div
+          aria-hidden
+          className="shrink-0"
+          style={{ height: `calc(env(safe-area-inset-top) + ${topChromeHeight + 16}px)` }}
+        />
 
         <section className="glass-card chat-card relative mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-1">
           {authUser?.isSuperAdmin && (
@@ -1736,8 +1761,6 @@ export default function ChatPage() {
                   onChange={(event) => setInput(event.target.value)}
                   onFocus={() => {
                     setIsComposerFocused(true);
-                    setAutoScrollEnabled(true);
-                    scheduleScrollToBottom();
                   }}
                   onBlur={() => {
                     setIsComposerFocused(false);

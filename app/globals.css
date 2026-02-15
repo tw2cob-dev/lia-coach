@@ -3,13 +3,18 @@
 :root {
   --app-vh: 100dvh;
   --app-vv-top: 0px;
-  --background: #eff2f8;
-  --foreground: #121826;
-  --muted: #6b7280;
+  --top-unified: #c7e2ff;
+  --top-surface-1: #d8e9ff;
+  --top-surface-2: #cfe3fb;
+  --top-border: rgba(96, 143, 194, 0.34);
+  --background: var(--top-unified);
+  --top-chrome-bg: var(--top-unified);
+  --foreground: #0f1f35;
+  --muted: #4d6078;
   --card: rgba(255, 255, 255, 0.8);
   --card-border: rgba(255, 255, 255, 0.22);
-  --accent: #6b7280;
-  --accent-2: #d1d5db;
+  --accent: #4d6078;
+  --accent-2: #bdd8ff;
   --app-glow-1: rgba(144, 199, 255, 0.24);
   --app-glow-2: rgba(188, 170, 255, 0.2);
   --app-glow-3: rgba(255, 255, 255, 0.94);
@@ -39,19 +44,24 @@ html[data-theme="light"] {
   --panel-summary-bg: transparent;
   --panel-chat-bg: transparent;
   --panel-composer-bg: transparent;
-  --assistant-bubble-bg: rgba(255, 255, 255, 0.72);
-  --welcome-bubble-bg: rgba(247, 250, 255, 0.9);
-  --welcome-bubble-border: rgba(148, 163, 184, 0.3);
-  --user-bubble-bg: rgba(30, 64, 175, 0.13);
+  --assistant-bubble-bg: rgba(241, 248, 255, 0.86);
+  --welcome-bubble-bg: rgba(234, 245, 255, 0.9);
+  --welcome-bubble-border: rgba(117, 170, 224, 0.34);
+  --user-bubble-bg: rgba(56, 189, 248, 0.16);
   --user-bubble-text: #0f172a;
-  --app-glow-1: rgba(142, 197, 255, 0.34);
-  --app-glow-2: rgba(137, 227, 255, 0.2);
+  --app-glow-1: rgba(86, 192, 255, 0.3);
+  --app-glow-2: rgba(64, 229, 255, 0.18);
   --app-glow-3: rgba(255, 255, 255, 0.9);
-  --app-base: #edf3fa;
+  --app-base: #c7e2ff;
 }
 
 html[data-theme="dark"] {
-  --background: #090b11;
+  --top-unified: #141d2d;
+  --top-surface-1: #0d1320;
+  --top-surface-2: #111a2a;
+  --top-border: rgba(148, 163, 184, 0.22);
+  --background: var(--top-unified);
+  --top-chrome-bg: var(--top-unified);
   --foreground: #e8ebf2;
   --muted: #99a2b2;
   --card: rgba(18, 22, 31, 0.86);
@@ -115,10 +125,59 @@ body {
 
 .app-bg {
   background:
-    radial-gradient(120% 80% at 20% 0%, var(--app-glow-1), transparent 60%),
-    radial-gradient(120% 80% at 80% 10%, var(--app-glow-2), transparent 55%),
-    radial-gradient(90% 80% at 50% 100%, var(--app-glow-3), transparent 60%),
-    var(--app-base);
+    repeating-linear-gradient(
+      0deg,
+      rgba(56, 189, 248, 0.16) 0px,
+      rgba(56, 189, 248, 0.16) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(56, 189, 248, 0.11) 0px,
+      rgba(56, 189, 248, 0.11) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    var(--top-unified);
+}
+
+.top-chrome-bg {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(56, 189, 248, 0.16) 0px,
+      rgba(56, 189, 248, 0.16) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(56, 189, 248, 0.11) 0px,
+      rgba(56, 189, 248, 0.11) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    var(--top-unified);
+}
+
+html[data-theme="dark"] .top-chrome-bg {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.012) 0px,
+      rgba(255, 255, 255, 0.012) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.01) 0px,
+      rgba(255, 255, 255, 0.01) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    var(--top-unified);
 }
 
 .glass-card {
@@ -141,8 +200,9 @@ body {
 }
 
 .avatar-btn {
-  border: 1px solid transparent;
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--top-border);
+  background: var(--top-surface-2) !important;
+  backdrop-filter: none;
 }
 
 .profile-panel {
@@ -157,8 +217,8 @@ body {
 }
 
 .summary-shell {
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: linear-gradient(165deg, rgba(255, 255, 255, 0.78), rgba(240, 246, 255, 0.55));
+  border: 1px solid var(--top-border);
+  background: var(--top-surface-1);
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14);
 }
 
@@ -177,8 +237,8 @@ body {
 }
 
 .summary-switch {
-  border: 1px solid transparent;
-  background: rgba(15, 23, 42, 0.18);
+  border: 1px solid var(--top-border);
+  background: var(--top-surface-2);
 }
 
 .summary-switch-btn {
@@ -186,16 +246,16 @@ body {
 }
 
 .summary-switch-btn.is-active {
-  background: linear-gradient(140deg, rgba(245, 248, 255, 0.88), rgba(228, 236, 250, 0.7)) !important;
-  color: #0f172a !important;
-  border: 1px solid rgba(15, 23, 42, 0.35);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.28);
+  background: linear-gradient(140deg, rgba(236, 249, 255, 0.95), rgba(211, 239, 255, 0.86)) !important;
+  color: #0d1e32 !important;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 6px 18px rgba(30, 123, 191, 0.28);
 }
 
 .summary-metric {
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.32) !important;
-  backdrop-filter: blur(6px);
+  border: 1px solid var(--top-border);
+  background: var(--top-surface-2) !important;
+  backdrop-filter: none;
 }
 
 .chat-scroll {
@@ -281,15 +341,15 @@ body {
 
 .composer-wrap {
   border-top-color: transparent !important;
-  padding-bottom: var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 4px));
+  padding-bottom: var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 2px));
 }
 
 .composer-wrap-sticky {
-  padding-bottom: calc(env(safe-area-inset-bottom) + 4px) !important;
+  padding-bottom: var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 2px)) !important;
 }
 
 .composer-wrap-fixed {
-  padding-bottom: calc(env(safe-area-inset-bottom) + 4px) !important;
+  padding-bottom: var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 2px)) !important;
 }
 
 .composer-chip {
@@ -349,8 +409,8 @@ html[data-theme="light"] .chat-card {
 }
 
 html[data-theme="light"] .summary-shell {
-  border-color: rgba(148, 163, 184, 0.28);
-  background: linear-gradient(165deg, rgba(252, 254, 255, 0.9), rgba(235, 242, 254, 0.58));
+  border-color: var(--top-border);
+  background: var(--top-surface-1);
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
 }
 
@@ -358,27 +418,24 @@ html[data-theme="light"] .app-bg {
   background:
     repeating-linear-gradient(
       0deg,
-      rgba(15, 23, 42, 0.014) 0px,
-      rgba(15, 23, 42, 0.014) 1px,
+      rgba(56, 189, 248, 0.16) 0px,
+      rgba(56, 189, 248, 0.16) 1px,
       transparent 1px,
       transparent 3px
     ),
     repeating-linear-gradient(
       90deg,
-      rgba(15, 23, 42, 0.01) 0px,
-      rgba(15, 23, 42, 0.01) 1px,
+      rgba(56, 189, 248, 0.11) 0px,
+      rgba(56, 189, 248, 0.11) 1px,
       transparent 1px,
       transparent 4px
     ),
-    radial-gradient(120% 80% at 20% 0%, var(--app-glow-1), transparent 60%),
-    radial-gradient(120% 80% at 80% 10%, var(--app-glow-2), transparent 55%),
-    radial-gradient(90% 80% at 50% 100%, var(--app-glow-3), transparent 60%),
-    var(--app-base);
+    var(--top-unified);
 }
 
 html[data-theme="light"] .summary-switch {
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--top-border);
+  background: var(--top-surface-2);
 }
 
 html[data-theme="light"] .summary-switch-btn {
@@ -386,16 +443,16 @@ html[data-theme="light"] .summary-switch-btn {
 }
 
 html[data-theme="light"] .summary-switch-btn.is-active {
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(236, 244, 255, 0.86)) !important;
-  color: #0f172a !important;
-  border: 1px solid rgba(148, 163, 184, 0.42);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.15);
+  background: linear-gradient(140deg, rgba(239, 250, 255, 0.96), rgba(215, 240, 255, 0.9)) !important;
+  color: #0d1e32 !important;
+  border: 1px solid rgba(56, 189, 248, 0.44);
+  box-shadow: 0 8px 18px rgba(37, 118, 182, 0.2);
 }
 
 html[data-theme="light"] .summary-metric {
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(255, 255, 255, 0.62) !important;
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--top-border);
+  background: var(--top-surface-2) !important;
+  backdrop-filter: none;
 }
 
 html[data-theme="light"] .assistant-bubble {
@@ -452,9 +509,9 @@ html[data-theme="light"] .composer-icon-btn {
 }
 
 html[data-theme="light"] .composer-send-btn {
-  border: 1px solid rgba(59, 130, 246, 0.55);
-  background: linear-gradient(140deg, #60a5fa, #3b82f6 56%, #2563eb) !important;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.34);
+  border: 1px solid rgba(34, 211, 238, 0.52);
+  background: linear-gradient(140deg, #67e8f9, #38bdf8 56%, #2563eb) !important;
+  box-shadow: 0 8px 18px rgba(14, 116, 144, 0.34);
 }
 
 html[data-theme="dark"] .app-bg .glass-card {
@@ -472,8 +529,8 @@ html[data-theme="dark"] .pro-pill {
 }
 
 html[data-theme="dark"] .avatar-btn {
-  border-color: transparent;
-  background: rgba(30, 37, 52, 0.72) !important;
+  border-color: var(--top-border);
+  background: var(--top-surface-2) !important;
 }
 
 html[data-theme="dark"] .profile-panel {
@@ -488,8 +545,8 @@ html[data-theme="dark"] .summary-card {
 }
 
 html[data-theme="dark"] .summary-shell {
-  border-color: rgba(148, 163, 184, 0.28);
-  background: linear-gradient(165deg, rgba(12, 18, 30, 0.88), rgba(15, 24, 40, 0.74));
+  border-color: var(--top-border);
+  background: var(--top-surface-1);
   box-shadow: 0 14px 30px rgba(2, 6, 23, 0.5);
 }
 
@@ -500,8 +557,8 @@ html[data-theme="dark"] .chat-card {
 }
 
 html[data-theme="dark"] .summary-switch {
-  border-color: transparent;
-  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--top-border);
+  background: var(--top-surface-2);
 }
 
 html[data-theme="dark"] .summary-switch-btn {
@@ -516,8 +573,8 @@ html[data-theme="dark"] .summary-switch-btn.is-active {
 }
 
 html[data-theme="dark"] .summary-metric {
-  border-color: transparent;
-  background: transparent !important;
+  border-color: var(--top-border);
+  background: var(--top-surface-2) !important;
 }
 
 html[data-theme="dark"] .app-bg .bg-white,
@@ -666,10 +723,7 @@ html[data-theme="dark"] .app-bg {
       transparent 1px,
       transparent 4px
     ),
-    radial-gradient(120% 80% at 18% 0%, var(--app-glow-1), transparent 62%),
-    radial-gradient(140% 85% at 84% 10%, var(--app-glow-2), transparent 58%),
-    radial-gradient(90% 75% at 50% 100%, var(--app-glow-3), transparent 62%),
-    var(--app-base);
+    var(--top-unified);
 }
 
 .app-bg .border-white\/70,

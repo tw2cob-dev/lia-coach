@@ -46,7 +46,7 @@ export default function LogPage() {
   if (foodCount > 0) summaryParts.push(`${foodCount} comidas`);
   if (trainingCount > 0) summaryParts.push(`${trainingCount} entrenos`);
   if (lastWeight !== null) summaryParts.push(`peso ${lastWeight} kg`);
-  const summaryText = summaryParts.length > 0 ? `Hoy: ${summaryParts.join(" · ")}` : null;
+  const summaryText = summaryParts.length > 0 ? `Hoy: ${summaryParts.join(" Â· ")}` : null;
 
   return (
     <div className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900">
