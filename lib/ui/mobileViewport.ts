@@ -4,6 +4,8 @@ export function bindAppViewportHeightVar(): () => void {
   }
 
   const root = document.documentElement;
+  const chatTailOffsetClosed = "0px";
+  const chatTailOffsetFocused = "0px";
 
   const updateHeight = () => {
     const visualViewportHeight = window.visualViewport?.height ?? window.innerHeight;
@@ -23,6 +25,10 @@ export function bindAppViewportHeightVar(): () => void {
     root.style.setProperty(
       "--composer-pad-bottom",
       keyboardLikelyOpen ? composerPadFocused : composerPadClosed
+    );
+    root.style.setProperty(
+      "--chat-tail-offset",
+      keyboardLikelyOpen ? chatTailOffsetFocused : chatTailOffsetClosed
     );
   };
 

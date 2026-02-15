@@ -3,14 +3,14 @@
 :root {
   --app-vh: 100dvh;
   --app-vv-top: 0px;
-  --top-unified: #c7e2ff;
-  --top-surface-1: #d8e9ff;
-  --top-surface-2: #cfe3fb;
-  --top-border: rgba(96, 143, 194, 0.34);
+  --top-unified: #eef4fb;
+  --top-surface-1: #f7faff;
+  --top-surface-2: #edf3fb;
+  --top-border: rgba(120, 142, 168, 0.24);
   --background: var(--top-unified);
   --top-chrome-bg: var(--top-unified);
-  --foreground: #0f1f35;
-  --muted: #4d6078;
+  --foreground: #10233d;
+  --muted: #5e7088;
   --card: rgba(255, 255, 255, 0.8);
   --card-border: rgba(255, 255, 255, 0.22);
   --accent: #4d6078;
@@ -20,12 +20,12 @@
   --app-glow-3: rgba(255, 255, 255, 0.94);
   --app-base: #ecf1f8;
   --chat-surface: rgba(227, 233, 244, 0.76);
-  --assistant-bubble-bg: rgba(248, 250, 255, 0.86);
-  --assistant-bubble-text: #0f172a;
+  --assistant-bubble-bg: rgba(255, 255, 255, 0.85);
+  --assistant-bubble-text: #13253f;
   --welcome-bubble-bg: rgba(241, 245, 255, 0.92);
   --welcome-bubble-border: rgba(191, 201, 219, 0.7);
-  --user-bubble-bg: #1e2533;
-  --user-bubble-text: #ffffff;
+  --user-bubble-bg: #d7ecff;
+  --user-bubble-text: #0f2a45;
   --panel-summary-bg: #ffe4e6;
   --panel-chat-bg: #dbeafe;
   --panel-composer-bg: #dcfce7;
@@ -41,14 +41,21 @@ body {
 
 html[data-theme="light"] {
   color-scheme: light;
+  --top-unified: #eef4fb;
+  --top-surface-1: #f7faff;
+  --top-surface-2: #edf3fb;
+  --top-border: rgba(120, 142, 168, 0.24);
+  --foreground: #10233d;
+  --muted: #5e7088;
   --panel-summary-bg: transparent;
   --panel-chat-bg: transparent;
   --panel-composer-bg: transparent;
-  --assistant-bubble-bg: rgba(241, 248, 255, 0.86);
+  --assistant-bubble-bg: rgba(255, 255, 255, 0.85);
+  --assistant-bubble-text: #13253f;
   --welcome-bubble-bg: rgba(234, 245, 255, 0.9);
   --welcome-bubble-border: rgba(117, 170, 224, 0.34);
-  --user-bubble-bg: rgba(56, 189, 248, 0.16);
-  --user-bubble-text: #0f172a;
+  --user-bubble-bg: #d7ecff;
+  --user-bubble-text: #0f2a45;
   --app-glow-1: rgba(86, 192, 255, 0.3);
   --app-glow-2: rgba(64, 229, 255, 0.18);
   --app-glow-3: rgba(255, 255, 255, 0.9);
@@ -409,24 +416,43 @@ html[data-theme="light"] .chat-card {
 }
 
 html[data-theme="light"] .summary-shell {
-  border-color: var(--top-border);
-  background: var(--top-surface-1);
-  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme="light"] .top-chrome-bg {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(56, 189, 248, 0.08) 0px,
+      rgba(56, 189, 248, 0.08) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(56, 189, 248, 0.055) 0px,
+      rgba(56, 189, 248, 0.055) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    var(--top-unified);
 }
 
 html[data-theme="light"] .app-bg {
   background:
     repeating-linear-gradient(
       0deg,
-      rgba(56, 189, 248, 0.16) 0px,
-      rgba(56, 189, 248, 0.16) 1px,
+      rgba(56, 189, 248, 0.08) 0px,
+      rgba(56, 189, 248, 0.08) 1px,
       transparent 1px,
       transparent 3px
     ),
     repeating-linear-gradient(
       90deg,
-      rgba(56, 189, 248, 0.11) 0px,
-      rgba(56, 189, 248, 0.11) 1px,
+      rgba(56, 189, 248, 0.055) 0px,
+      rgba(56, 189, 248, 0.055) 1px,
       transparent 1px,
       transparent 4px
     ),
@@ -468,9 +494,9 @@ html[data-theme="light"] .welcome-bubble {
 }
 
 html[data-theme="light"] .user-bubble {
-  background: transparent;
-  border: 1px solid transparent;
-  box-shadow: none;
+  background: var(--user-bubble-bg);
+  border: 1px solid rgba(102, 153, 204, 0.32);
+  box-shadow: 0 6px 14px rgba(62, 127, 186, 0.12);
 }
 
 html[data-theme="light"] .message-list > .message-row + .message-row::before {
@@ -509,9 +535,9 @@ html[data-theme="light"] .composer-icon-btn {
 }
 
 html[data-theme="light"] .composer-send-btn {
-  border: 1px solid rgba(34, 211, 238, 0.52);
-  background: linear-gradient(140deg, #67e8f9, #38bdf8 56%, #2563eb) !important;
-  box-shadow: 0 8px 18px rgba(14, 116, 144, 0.34);
+  border: 1px solid rgba(125, 188, 230, 0.62);
+  background: linear-gradient(140deg, #9adfff, #74c9f3 58%, #55b6e8) !important;
+  box-shadow: 0 8px 16px rgba(85, 182, 232, 0.24);
 }
 
 html[data-theme="dark"] .app-bg .glass-card {
@@ -732,7 +758,65 @@ html[data-theme="dark"] .app-bg {
 }
 
 .cta-gradient {
-  background: linear-gradient(130deg, #6b7280, #d1d5db);
+  background: linear-gradient(130deg, #4aa3e6, #2f80c8);
+}
+
+.lia-wordmark {
+  display: inline-block;
+  line-height: 1;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  -webkit-text-stroke: 0;
+  filter: none;
+  text-decoration: none;
+  text-shadow: none;
+  animation: none;
+  will-change: auto;
+}
+
+html[data-theme="dark"] .lia-wordmark {
+  background:
+    linear-gradient(90deg, var(--neon-cyan-soft), var(--neon-cyan-soft)),
+    linear-gradient(
+      90deg,
+      rgba(234, 255, 255, 0) 44%,
+      #eaffff 50%,
+      rgba(234, 255, 255, 0) 56%
+    );
+  background-size: 100% 100%, 120px 100%;
+  background-position: 0% 50%, -90px 50%;
+  background-repeat: no-repeat, no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: lia-think-sweep-31 10s linear infinite;
+  will-change: background-position;
+}
+
+@keyframes lia-think-sweep-31 {
+  0% {
+    background-position: 0% 50%, -90px 50%;
+  }
+  25% {
+    background-position: 0% 50%, 30px 50%;
+  }
+  50% {
+    background-position: 0% 50%, -90px 50%;
+  }
+  75% {
+    background-position: 0% 50%, 30px 50%;
+  }
+  100% {
+    background-position: 0% 50%, -90px 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lia-wordmark {
+    animation: none;
+  }
 }
 
 .subtle-border {

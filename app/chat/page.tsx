@@ -33,6 +33,7 @@ const COACH_PLAN_STORAGE_KEY = "lia-coach-plan";
 const LEGACY_CHAT_MESSAGES_KEY = "lia-chat-messages";
 const SCROLL_THRESHOLD_PX = 80;
 const CHAT_TO_COMPOSER_GAP_PX = 2;
+const CHAT_MAIN_RESERVE_PX = 60;
 const MAX_TEXTAREA_LINES = 2;
 const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
@@ -1223,13 +1224,16 @@ export default function ChatPage() {
           ref={topChromeRef}
           className="top-chrome-bg fixed inset-x-0 top-[calc(var(--app-vv-top)+env(safe-area-inset-top))] z-40 px-3"
         >
-          <header ref={headerRef} className="mx-auto flex w-full max-w-[520px] items-center justify-between">
-          <div className="min-w-0 pl-1">
-            <h1 className="font-display truncate text-2xl text-slate-900">
+          <header
+            ref={headerRef}
+            className="mx-auto grid w-full max-w-[520px] grid-cols-[1fr_auto_1fr] items-center gap-2"
+          >
+          <div className="min-w-0 justify-self-start pl-1">
+            <h1 className="font-display text-xl leading-none text-slate-900">
               <button
                 type="button"
                 onClick={handleViewportDebugTap}
-                className="text-[0.9em] font-medium uppercase tracking-[0.18em] text-slate-300"
+                className="lia-wordmark text-[1.4em] font-medium uppercase tracking-[0.18em]"
                 aria-label="LIA"
                 title="Toca 5 veces para debug viewport"
               >
@@ -1237,12 +1241,13 @@ export default function ChatPage() {
               </button>
             </h1>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="summary-switch inline-flex shrink-0 rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm">
+          <div className="justify-self-center px-1">
+            <div className="relative flex h-10 items-center justify-center">
+              <div className="summary-switch inline-flex max-w-full rounded-full bg-white/75 p-1 text-[10px] font-semibold shadow-sm">
               <button
                 type="button"
                 onClick={() => setSummaryMode("daily")}
-                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
+                className={`summary-switch-btn rounded-full px-2.5 py-1 transition sm:px-3 ${
                   summaryMode === "daily" ? "is-active bg-slate-900 text-white" : "text-slate-600"
                 }`}
               >
@@ -1251,15 +1256,16 @@ export default function ChatPage() {
               <button
                 type="button"
                 onClick={() => setSummaryMode("weekly")}
-                className={`summary-switch-btn rounded-full px-3 py-1 transition ${
+                className={`summary-switch-btn rounded-full px-2.5 py-1 transition sm:px-3 ${
                   summaryMode === "weekly" ? "is-active bg-slate-900 text-white" : "text-slate-600"
                 }`}
               >
                 Semanal
               </button>
+              </div>
             </div>
-            <p className="truncate text-sm font-medium leading-none text-slate-400">{dateLabel}</p>
-            <div className="relative" ref={profilePanelRef}>
+          </div>
+            <div className="relative justify-self-end pr-0.5" ref={profilePanelRef}>
               <button
                 type="button"
                 onClick={() => setIsProfileOpen((prev) => !prev)}
@@ -1287,10 +1293,6 @@ export default function ChatPage() {
                     <p>
                       <span className="text-slate-500">Email: </span>
                       {authUser?.email || "Sin email"}
-                    </p>
-                    <p>
-                      <span className="text-slate-500">ID: </span>
-                      <span className="break-all">{authUser?.id || "-"}</span>
                     </p>
                   </div>
 
@@ -1335,7 +1337,6 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-          </div>
           </header>
 
           <section className="summary-shell glass-card summary-card mt-1 mx-auto w-full max-w-[520px] rounded-[20px] p-2">
@@ -1372,34 +1373,8 @@ export default function ChatPage() {
           style={{ height: `calc(env(safe-area-inset-top) + ${topChromeHeight + 16}px)` }}
         />
 
-        <section className="glass-card chat-card relative mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-1">
-          {authUser?.isSuperAdmin && (
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                className="text-xs font-semibold text-slate-600"
-                onClick={() => setIsDebugOpen((prev) => !prev)}
-              >
-                {isDebugOpen ? "Ocultar debug" : "Ver debug IA"}
-              </button>
-              <button
-                type="button"
-                className="text-xs font-semibold text-slate-600"
-                onClick={() => router.push("/probe")}
-              >
-                Probe
-              </button>
-              <button
-                type="button"
-                className="text-xs font-semibold text-rose-600"
-                onClick={handleResetChat}
-                disabled={isStreaming}
-              >
-                Reset chat
-              </button>
-            </div>
-          )}
-          {authUser?.isSuperAdmin && isDebugOpen && (
+        <section className="glass-card chat-card relative mt-0 flex min-h-0 flex-1 flex-col rounded-3xl p-0">
+          {authUser?.isSuperAdmin && isViewportDebugEnabled && isDebugOpen && (
             <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
               <p className="font-semibold text-slate-900">Debug IA</p>
               {!lastAIDebug ? (
@@ -1475,6 +1450,32 @@ export default function ChatPage() {
                   </button>
                 </div>
               </div>
+              {authUser?.isSuperAdmin && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white"
+                    onClick={() => setIsDebugOpen((prev) => !prev)}
+                  >
+                    {isDebugOpen ? "Ocultar debug IA" : "Ver debug IA"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white"
+                    onClick={() => router.push("/probe")}
+                  >
+                    Probe
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-rose-700 bg-rose-700 px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-60"
+                    onClick={handleResetChat}
+                    disabled={isStreaming}
+                  >
+                    Reset chat
+                  </button>
+                </div>
+              )}
               <p className="mt-1 whitespace-pre-wrap">{`build=${VIEWPORT_DEBUG_BUILD}`}</p>
               <p className="mt-1 whitespace-pre-wrap">
                 {`displayMode=${displayModeDebug.displayMode} navigatorStandalone=${displayModeDebug.navigatorStandalone}`}
@@ -1504,8 +1505,11 @@ export default function ChatPage() {
           <main
             ref={scrollRef}
             onScroll={handleScroll}
-            className="chat-scroll mt-1 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}
+            className="chat-scroll mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            style={{
+              paddingBottom:
+                `calc(var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 2px)) + ${CHAT_MAIN_RESERVE_PX}px + var(--chat-tail-offset, 0px))`,
+            }}
           >
             <ul className="message-list px-1 pb-1">
               <li className="message-row">
