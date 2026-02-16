@@ -1,6 +1,7 @@
 import { ChatEvent } from "../chatEvents";
-import { CoachPlan } from "../coachPlan";
+import { CoachPlan, LIA_TIMEZONE, getDateISOInTimezone } from "../coachPlan";
 import { classifyMessage, extractWeight } from "../parsing";
+import { computeDayFoodTotals } from "../nutrition/foodLedger";
 
 type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -10,6 +11,7 @@ type DailyMetrics = {
   basalKcal: number | null;
   tdeeKcal: number | null;
   burnKcal: number;
+  plannedBurnKcal: number;
   lastWeightKg: number | null;
   weightDeltaKg30d: number | null;
   confidence: "high" | "medium" | "low" | "none";
@@ -18,12 +20,29 @@ type DailyMetrics = {
 type WeeklySeries = {
   intakeKcal: number[];
   burnKcal: number[];
+  plannedBurnKcal: number[];
   weightKg: Array<number | null>;
+};
+
+type NutritionMetrics = {
+  macros: {
+    proteinG: number | null;
+    carbsG: number | null;
+    fatG: number | null;
+    fiberG: number | null;
+  };
+  micros: {
+    magnesiumMg: number | null;
+    omega3G: number | null;
+    sodiumMg: number | null;
+  };
+  source: "label" | "database" | "manual" | "unknown" | null;
 };
 
 export type DashboardMetrics = {
   daily: DailyMetrics;
   weekly: WeeklySeries;
+  nutrition: NutritionMetrics;
 };
 
 type RecurringTraining = {
@@ -65,6 +84,9 @@ export function buildDashboardMetrics(
   plan?: CoachPlan | null,
   now = new Date()
 ): DashboardMetrics {
+  const timezone = plan?.time?.timezone ?? LIA_TIMEZONE;
+  const currentDayId = plan?.time?.current_day_id ?? `${getDateISOInTimezone(now, timezone)}@${timezone}`;
+  const todayISO = currentDayId.split("@")[0] ?? getDateISOInTimezone(now, timezone);
   const userEntries = events
     .filter((event) => event.role === "user")
     .map((event) => ({
@@ -83,18 +105,21 @@ export function buildDashboardMetrics(
 
   const recurringTraining = extractRecurringTraining(userEntries.map((e) => e.text));
   const weekly = buildWeeklySeries(userEntries, recurringTraining, now);
-  applyTodaySignals(weekly, plan, now);
+  applyHistoricalSnapshots(weekly, plan, now, timezone);
+  applyTodaySignals(weekly, plan, todayISO);
   const signalTodayWeight =
-    plan?.signals?.today?.dateISO === toDateISO(now) ? plan?.signals?.today?.weightKg : undefined;
+    plan?.signals?.today?.dateISO === todayISO ? plan?.signals?.today?.weightKg : undefined;
   const latestWeight =
     getLatestWeight(userEntries) ?? signalTodayWeight ?? plan?.physicalProfile?.weightKg ?? null;
   const oldWeight = getOldWeightReference(userEntries, 30, now);
   const profile = mergeInferredProfile(plan?.physicalProfile, userEntries, latestWeight);
   const hasUserData = hasMeaningfulData(userEntries, profile);
   const energy = estimateEnergyModel(profile);
+  const plannedBurnSeries = buildPlannedBurnSeries(plan, now, profile.weightKg ?? latestWeight ?? null);
   const todayIndex = 6;
   const todayIntake = weekly.intakeKcal[todayIndex] || 0;
   const todayBurn = weekly.burnKcal[todayIndex] || 0;
+  const todayPlannedBurn = plannedBurnSeries[todayIndex] || 0;
   const tdeeBase = energy.tdeeKcal;
   const expectedTotal = hasUserData ? Math.max(1200, tdeeBase + todayBurn) : null;
   const todayTarget =
@@ -109,18 +134,22 @@ export function buildDashboardMetrics(
       basalKcal: hasUserData ? energy.basalKcal : null,
       tdeeKcal: hasUserData ? tdeeBase : null,
       burnKcal: todayBurn,
+      plannedBurnKcal: todayPlannedBurn,
       lastWeightKg: latestWeight,
       weightDeltaKg30d: delta,
       confidence: hasUserData ? energy.confidence : "none",
     },
-    weekly,
+    weekly: {
+      ...weekly,
+      plannedBurnKcal: plannedBurnSeries,
+    },
+    nutrition: buildNutritionMetrics(plan, currentDayId),
   };
 }
 
-function applyTodaySignals(weekly: WeeklySeries, plan: CoachPlan | null | undefined, now: Date): void {
+function applyTodaySignals(weekly: WeeklySeries, plan: CoachPlan | null | undefined, todayISO: string): void {
   const todaySignal = plan?.signals?.today;
   if (!todaySignal) return;
-  const todayISO = toDateISO(now);
   if (todaySignal.dateISO !== todayISO) return;
 
   const todayIndex = 6;
@@ -143,6 +172,36 @@ function applyTodaySignals(weekly: WeeklySeries, plan: CoachPlan | null | undefi
   }
   if (typeof todaySignal.weightKg === "number" && todaySignal.weightKg > 0) {
     weekly.weightKg[todayIndex] = todaySignal.weightKg;
+  }
+}
+
+function applyHistoricalSnapshots(
+  weekly: WeeklySeries,
+  plan: CoachPlan | null | undefined,
+  now: Date,
+  timezone: string
+): void {
+  const days = plan?.history?.days;
+  if (!days) return;
+  const startOfToday = dateStart(now);
+  for (let i = 6; i >= 0; i -= 1) {
+    const dayIndex = 6 - i;
+    const day = new Date(startOfToday);
+    day.setDate(startOfToday.getDate() - i);
+    const dateISO = toDateISO(day);
+    const dayId = `${dateISO}@${timezone}`;
+    const snapshot = days[dayId];
+    if (!snapshot) continue;
+    const hasEntries = Array.isArray(snapshot.foodEntries) && snapshot.foodEntries.length > 0;
+    if (hasEntries) {
+      const totals = computeDayFoodTotals(snapshot.foodEntries ?? []);
+      weekly.intakeKcal[dayIndex] = Math.max(0, totals.intakeKcal || 0);
+    } else {
+      weekly.intakeKcal[dayIndex] = Math.max(0, snapshot.kcalIn || 0);
+    }
+    if (typeof snapshot.kcalOut === "number" && snapshot.kcalOut > 0) {
+      weekly.burnKcal[dayIndex] = Math.max(0, snapshot.kcalOut || 0);
+    }
   }
 }
 
@@ -193,7 +252,109 @@ function buildWeeklySeries(
     }
   }
 
-  return { intakeKcal, burnKcal, weightKg };
+  return {
+    intakeKcal,
+    burnKcal,
+    plannedBurnKcal: Array.from({ length: 7 }, () => 0),
+    weightKg,
+  };
+}
+
+function buildPlannedBurnSeries(
+  plan: CoachPlan | null | undefined,
+  now: Date,
+  weightKg: number | null
+): number[] {
+  const series = Array.from({ length: 7 }, () => 0);
+  const weekly = plan?.routines?.weekly ?? [];
+  if (weekly.length === 0) return series;
+  const startOfToday = dateStart(now);
+  for (let i = 6; i >= 0; i -= 1) {
+    const dayIndex = 6 - i;
+    const day = new Date(startOfToday);
+    day.setDate(startOfToday.getDate() - i);
+    const weekday = day.getDay() as Weekday;
+    const plannedForDay = weekly.filter((routine) => routine.weekday === weekday);
+    series[dayIndex] = plannedForDay.reduce((sum, routine) => {
+      if (typeof routine.targetBurnKcal === "number" && routine.targetBurnKcal > 0) {
+        return sum + Math.round(routine.targetBurnKcal);
+      }
+      const minutes = routine.targetMinutes ?? 45;
+      const met = estimateMET(routine.activity);
+      const weight = weightKg && weightKg > 0 ? weightKg : 75;
+      return sum + Math.round(met * weight * (minutes / 60));
+    }, 0);
+  }
+  return series;
+}
+
+function buildNutritionMetrics(
+  plan: CoachPlan | null | undefined,
+  currentDayId: string
+): NutritionMetrics {
+  const today = plan?.signals?.today;
+  const fromHistory = plan?.history?.days?.[currentDayId];
+  const entryTotals =
+    Array.isArray(fromHistory?.foodEntries) && fromHistory.foodEntries.length > 0
+      ? computeDayFoodTotals(fromHistory.foodEntries)
+      : null;
+  const sourceCandidate = today?.nutritionSource ?? fromHistory?.nutritionSource ?? null;
+  const hasStructuredSource =
+    sourceCandidate === "label" || sourceCandidate === "database" || sourceCandidate === "manual";
+  return {
+    macros: {
+      proteinG:
+        entryTotals?.proteinG ??
+        (typeof today?.proteinG === "number"
+          ? today.proteinG
+          : typeof fromHistory?.proteinG === "number"
+          ? fromHistory.proteinG
+          : null),
+      carbsG:
+        entryTotals?.carbsG ??
+        (typeof today?.carbsG === "number"
+          ? today.carbsG
+          : typeof fromHistory?.carbsG === "number"
+          ? fromHistory.carbsG
+          : null),
+      fatG:
+        entryTotals?.fatG ??
+        (typeof today?.fatG === "number"
+          ? today.fatG
+          : typeof fromHistory?.fatG === "number"
+          ? fromHistory.fatG
+          : null),
+      fiberG:
+        typeof today?.fiberG === "number" ? today.fiberG : typeof fromHistory?.fiberG === "number" ? fromHistory.fiberG : null,
+    },
+    micros: {
+      magnesiumMg:
+        hasStructuredSource && typeof today?.magnesiumMg === "number"
+          ? today.magnesiumMg
+          : hasStructuredSource && typeof fromHistory?.magnesiumMg === "number"
+          ? fromHistory.magnesiumMg
+          : null,
+      omega3G:
+        hasStructuredSource && typeof today?.omega3G === "number"
+          ? today.omega3G
+          : hasStructuredSource && typeof fromHistory?.omega3G === "number"
+          ? fromHistory.omega3G
+          : null,
+      sodiumMg:
+        hasStructuredSource && typeof today?.sodiumMg === "number"
+          ? today.sodiumMg
+          : hasStructuredSource && typeof fromHistory?.sodiumMg === "number"
+          ? fromHistory.sodiumMg
+          : null,
+    },
+    source:
+      sourceCandidate === "label" ||
+      sourceCandidate === "database" ||
+      sourceCandidate === "manual" ||
+      sourceCandidate === "unknown"
+        ? sourceCandidate
+        : null,
+  };
 }
 
 function extractRecurringTraining(texts: string[]): RecurringTraining[] {

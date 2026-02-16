@@ -17,7 +17,24 @@ import { AIReplyDebug } from "../../lib/aiClient";
 import { extractMemoryPatch } from "../../lib/aiMemoryClient";
 import { buildDashboardMetrics } from "../../lib/chat/dashboardMetrics";
 import { LIA_WELCOME_MESSAGE } from "../../lib/chat/welcomeMessage";
-import { CoachPlan, getCoachPlan, saveCoachPlan, upsertCoachPlan } from "../../lib/coachPlan";
+import {
+  CoachPlan,
+  LIA_TIMEZONE,
+  buildDayId,
+  ensureCurrentDay,
+  getDefaultTimezone,
+  getCoachPlan,
+  getDateISOInTimezone,
+  saveCoachPlan,
+  upsertCoachPlan,
+} from "../../lib/coachPlan";
+import { classifyMessage } from "../../lib/parsing";
+import {
+  ParsedFoodMutation,
+  mergeFoodEntries,
+  parseFoodMutation,
+  recomputeFromEntries,
+} from "../../lib/nutrition/foodEntryParser";
 import {
   clearCloudChatState,
   loadCloudChatState,
@@ -38,6 +55,7 @@ const MAX_TEXTAREA_LINES = 2;
 const MAX_FILE_TEXT_CHARS = 20000;
 const SUMMARY_PREVIEW_CHARS = 200;
 const MAX_SELECTED_FILES = 3;
+const CHAT_BOOT_SPLASH_MIN_MS = 1800;
 const THEME_STORAGE_KEY = "lia-theme-preference";
 const VIEWPORT_DEBUG_STORAGE_KEY = "lia-debug-viewport";
 const VIEWPORT_DEBUG_BUILD = "viewport-fix-2026-02-14-1746";
@@ -100,6 +118,17 @@ type ViewportDebugSnapshot = {
   headerBottom: number;
   composerTop: number;
   composerBottom: number;
+  scrollTop: number;
+  scrollHeight: number;
+  scrollClientHeight: number;
+  distanceFromBottom: number;
+  endBottom: number;
+  endToComposerGap: number;
+  autoScrollEnabled: boolean;
+  keyboardLikelyOpen: boolean;
+  appVh: string;
+  composerPadBottom: string;
+  chatTailOffset: string;
 };
 type DisplayModeDebugSnapshot = {
   displayMode: string;
@@ -138,12 +167,16 @@ export default function ChatPage() {
   const [lastAIDebug, setLastAIDebug] = useState<AIReplyDebug | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
+  const [showBootSplash, setShowBootSplash] = useState(true);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [, setCoachPlanVersion] = useState(0);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
   const [isViewportDebugEnabled, setIsViewportDebugEnabled] = useState(false);
+  const [isViewportDebugPanelOpen, setIsViewportDebugPanelOpen] = useState(false);
   const [viewportCopyFallbackText, setViewportCopyFallbackText] = useState("");
   const [topChromeHeight, setTopChromeHeight] = useState(140);
+  const [composerReservePx, setComposerReservePx] = useState(CHAT_MAIN_RESERVE_PX);
   const [viewportDebug, setViewportDebug] = useState<ViewportDebugSnapshot>({
     innerHeight: 0,
     outerHeight: 0,
@@ -156,6 +189,17 @@ export default function ChatPage() {
     headerBottom: 0,
     composerTop: 0,
     composerBottom: 0,
+    scrollTop: 0,
+    scrollHeight: 0,
+    scrollClientHeight: 0,
+    distanceFromBottom: 0,
+    endBottom: 0,
+    endToComposerGap: 0,
+    autoScrollEnabled: true,
+    keyboardLikelyOpen: false,
+    appVh: "",
+    composerPadBottom: "",
+    chatTailOffset: "",
   });
   const [viewportLogLines, setViewportLogLines] = useState<string[]>([]);
   const [displayModeDebug, setDisplayModeDebug] = useState<DisplayModeDebugSnapshot>({
@@ -163,6 +207,7 @@ export default function ChatPage() {
     navigatorStandalone: "unknown",
     userAgent: "",
   });
+  const [pendingRetroFoodMutation, setPendingRetroFoodMutation] = useState<ParsedFoodMutation | null>(null);
   const activeUserId = authUser?.id ?? "anon";
   const activeChatStorageKey = getChatStorageKey(activeUserId);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -177,12 +222,17 @@ export default function ChatPage() {
   const viewportLogRef = useRef<string[]>([]);
   const viewportDebugTapCountRef = useRef(0);
   const viewportDebugTapTimerRef = useRef<number | null>(null);
+  const bootSplashStartRef = useRef(Date.now());
+  const initialBottomLockDoneRef = useRef(false);
+  const autoScrollEnabledRef = useRef(true);
+  const userScrollIntentRef = useRef(false);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setAuthUser(null);
+        setIsAuthResolved(true);
         void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
           router.replace("/login");
         });
@@ -193,6 +243,7 @@ export default function ChatPage() {
         await user.reload();
       } catch {
         setAuthUser(null);
+        setIsAuthResolved(true);
         void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
           router.replace("/login");
         });
@@ -201,6 +252,7 @@ export default function ChatPage() {
 
       if (!user.emailVerified) {
         setAuthUser(null);
+        setIsAuthResolved(true);
         await firebaseSignOut(auth).catch(() => undefined);
         void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
           router.replace("/login");
@@ -222,8 +274,10 @@ export default function ChatPage() {
         const data = (await meResponse.json()) as { user?: AuthUser };
         if (!data.user?.id || !data.user.email) throw new Error("Invalid session user payload.");
         setAuthUser(data.user);
+        setIsAuthResolved(true);
       } catch {
         setAuthUser(null);
+        setIsAuthResolved(true);
         await firebaseSignOut(auth).catch(() => undefined);
         void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
           router.replace("/login");
@@ -235,6 +289,16 @@ export default function ChatPage() {
   }, [router]);
 
   useEffect(() => bindAppViewportHeightVar(), []);
+
+  useEffect(() => {
+    if (!isAuthResolved) return;
+    const elapsed = Date.now() - bootSplashStartRef.current;
+    const remaining = Math.max(0, CHAT_BOOT_SPLASH_MIN_MS - elapsed);
+    const timeoutId = window.setTimeout(() => {
+      setShowBootSplash(false);
+    }, remaining);
+    return () => window.clearTimeout(timeoutId);
+  }, [isAuthResolved]);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -263,14 +327,17 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    ensureCurrentDay();
     setHasHydrated(true);
   }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const persisted = window.localStorage.getItem(VIEWPORT_DEBUG_STORAGE_KEY) === "1";
-    if (params.get("debugViewport") === "1" || persisted) {
+    const requested = params.get("debugViewport") === "1";
+    if (requested || persisted) {
       setIsViewportDebugEnabled(true);
+      setIsViewportDebugPanelOpen(requested);
     }
   }, []);
 
@@ -293,25 +360,59 @@ export default function ChatPage() {
       const vv = window.visualViewport;
       const headerRect = headerRef.current?.getBoundingClientRect();
       const composerRect = composerRef.current?.getBoundingClientRect();
+      const endRect = endRef.current?.getBoundingClientRect();
+      const container = scrollRef.current;
+      const scrollTop = Math.round(container?.scrollTop ?? 0);
+      const scrollHeight = Math.round(container?.scrollHeight ?? 0);
+      const scrollClientHeight = Math.round(container?.clientHeight ?? 0);
+      const distanceFromBottom = Math.round(
+        (container?.scrollHeight ?? 0) - (container?.scrollTop ?? 0) - (container?.clientHeight ?? 0)
+      );
+      const rootStyle = window.getComputedStyle(document.documentElement);
+      const composerTop = Math.round(composerRect?.top ?? 0);
+      const endBottom = Math.round(endRect?.bottom ?? 0);
+      const vvHeight = Math.round(vv?.height ?? 0);
+      const vvOffsetTop = Math.round(vv?.offsetTop ?? 0);
+      const keyboardLikelyOpen = vvOffsetTop > 0 || window.innerHeight - vvHeight > 80;
       return {
         innerHeight: Math.round(window.innerHeight),
         outerHeight: Math.round(window.outerHeight),
         scrollY: Math.round(window.scrollY),
         activeTag: activeTagName(),
-        vvHeight: Math.round(vv?.height ?? 0),
-        vvOffsetTop: Math.round(vv?.offsetTop ?? 0),
+        vvHeight,
+        vvOffsetTop,
         vvPageTop: Math.round(vv?.pageTop ?? 0),
         headerTop: Math.round(headerRect?.top ?? 0),
         headerBottom: Math.round(headerRect?.bottom ?? 0),
-        composerTop: Math.round(composerRect?.top ?? 0),
+        composerTop,
         composerBottom: Math.round(composerRect?.bottom ?? 0),
+        scrollTop,
+        scrollHeight,
+        scrollClientHeight,
+        distanceFromBottom,
+        endBottom,
+        endToComposerGap: Math.round(composerTop - endBottom),
+        autoScrollEnabled: autoScrollEnabledRef.current,
+        keyboardLikelyOpen,
+        appVh: rootStyle.getPropertyValue("--app-vh").trim(),
+        composerPadBottom: rootStyle.getPropertyValue("--composer-pad-bottom").trim(),
+        chatTailOffset: rootStyle.getPropertyValue("--chat-tail-offset").trim(),
       };
     };
 
     const appendLog = (label: string) => {
       const snap = readSnapshot();
-      const line = `${now()} ${label} | inner=${snap.innerHeight} vv=${snap.vvHeight} offTop=${snap.vvOffsetTop} scrollY=${snap.scrollY} active=${snap.activeTag} header=[${snap.headerTop},${snap.headerBottom}] composer=[${snap.composerTop},${snap.composerBottom}]`;
-      viewportLogRef.current = [...viewportLogRef.current.slice(-59), line];
+      const issues: string[] = [];
+      if (snap.endToComposerGap < -4) issues.push("LAST_UNDER_COMPOSER");
+      if (snap.autoScrollEnabled && snap.distanceFromBottom > SCROLL_THRESHOLD_PX + 8) {
+        issues.push("AUTO_SCROLL_DRIFT");
+      }
+      if (snap.keyboardLikelyOpen && snap.vvOffsetTop === 0 && snap.innerHeight - snap.vvHeight <= 80) {
+        issues.push("KEYBOARD_STATE_UNCERTAIN");
+      }
+      const issueText = issues.length > 0 ? ` issues=${issues.join(",")}` : "";
+      const line = `${now()} ${label} | inner=${snap.innerHeight} vv=${snap.vvHeight} offTop=${snap.vvOffsetTop} scrollY=${snap.scrollY} active=${snap.activeTag} auto=${snap.autoScrollEnabled ? "1" : "0"} kbd=${snap.keyboardLikelyOpen ? "1" : "0"} dist=${snap.distanceFromBottom} gap=${snap.endToComposerGap} endBottom=${snap.endBottom} composerTop=${snap.composerTop}${issueText}`;
+      viewportLogRef.current = [...viewportLogRef.current.slice(-119), line];
       setViewportLogLines(viewportLogRef.current);
       setViewportDebug(snap);
     };
@@ -333,6 +434,7 @@ export default function ChatPage() {
     const vv = window.visualViewport;
     const onVvResize = () => schedule("vv.resize");
     const onVvScroll = () => schedule("vv.scroll");
+    const intervalId = window.setInterval(() => schedule("tick"), 900);
 
     appendLog("debug.start");
     window.addEventListener("focusin", onFocusIn);
@@ -345,6 +447,7 @@ export default function ChatPage() {
 
     return () => {
       if (rafId !== null) window.cancelAnimationFrame(rafId);
+      window.clearInterval(intervalId);
       window.removeEventListener("focusin", onFocusIn);
       window.removeEventListener("focusout", onFocusOut);
       window.removeEventListener("resize", onResize);
@@ -378,6 +481,10 @@ export default function ChatPage() {
   }, [isStreaming, isComposerFocused]);
 
   useEffect(() => {
+    autoScrollEnabledRef.current = autoScrollEnabled;
+  }, [autoScrollEnabled]);
+
+  useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (stored === "light" || stored === "dark" || stored === "system") {
       setThemePreference(stored);
@@ -408,6 +515,38 @@ export default function ChatPage() {
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const node = composerRef.current;
+    if (!node) return;
+
+    const measure = () => {
+      const next = Math.ceil(node.getBoundingClientRect().height);
+      if (next <= 0) return;
+      setComposerReservePx((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+    };
+
+    measure();
+    const rafId = window.requestAnimationFrame(measure);
+    const timerId = window.setTimeout(measure, 120);
+    const onResize = () => measure();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => measure());
+      observer.observe(node);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timerId);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      observer?.disconnect();
+    };
+  }, [selectedFileIds.length, pendingAttachment, pendingNote, isComposerFocused, isStreaming, input]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -471,6 +610,7 @@ export default function ChatPage() {
         window.localStorage.setItem(activeChatStorageKey, JSON.stringify(mergedEvents));
         if (mergedPlan) {
           saveCoachPlan(mergedPlan);
+          ensureCurrentDay();
           setCoachPlanVersion((prev) => prev + 1);
         }
 
@@ -497,6 +637,7 @@ export default function ChatPage() {
             window.localStorage.setItem(activeChatStorageKey, JSON.stringify(nextEvents));
             if (liveCloudState.coachPlan) {
               saveCoachPlan(liveCloudState.coachPlan);
+              ensureCurrentDay();
               setCoachPlanVersion((prev) => prev + 1);
             }
             setCloudSyncError(null);
@@ -537,16 +678,35 @@ export default function ChatPage() {
   const handleScroll = () => {
     const container = scrollRef.current;
     if (!container) return;
+    if (isComposerFocused) {
+      setAutoScrollEnabled(true);
+      return;
+    }
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     const nearBottom = distanceFromBottom <= SCROLL_THRESHOLD_PX;
-    setAutoScrollEnabled(nearBottom);
+    if (nearBottom) {
+      setAutoScrollEnabled(true);
+      return;
+    }
+    // WhatsApp-like behavior: only unpin if the user intentionally scrolls up.
+    if (!userScrollIntentRef.current) return;
+    setAutoScrollEnabled(false);
   };
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const container = scrollRef.current;
     if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior });
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTo({ top: maxTop, behavior });
+    container.scrollTop = maxTop;
+    endRef.current?.scrollIntoView({ block: "end", inline: "nearest", behavior });
+  }, []);
+
+  const getDistanceFromBottom = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return 0;
+    return container.scrollHeight - container.scrollTop - container.clientHeight;
   }, []);
 
   const scheduleScrollToBottom = useCallback(() => {
@@ -563,6 +723,104 @@ export default function ChatPage() {
     if (!autoScrollEnabled) return;
     scheduleScrollToBottom();
   }, [events, streamingText, autoScrollEnabled, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (initialBottomLockDoneRef.current) return;
+    if (!hasHydrated) return;
+    if (showBootSplash) return;
+    if (!scrollRef.current) return;
+    if (events.length === 0 && !isStreaming) return;
+
+    initialBottomLockDoneRef.current = true;
+    setAutoScrollEnabled(true);
+    scheduleScrollToBottom();
+    const rafId = window.requestAnimationFrame(() => {
+      scheduleScrollToBottom();
+    });
+    const timeoutId = window.setTimeout(() => {
+      scheduleScrollToBottom();
+    }, 180);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [hasHydrated, showBootSplash, events.length, isStreaming, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled && !isComposerFocused) return;
+
+    const timeoutIds = new Set<number>();
+    const settleScrollToBottom = () => {
+      scheduleScrollToBottom();
+      const timeoutId = window.setTimeout(() => {
+        timeoutIds.delete(timeoutId);
+        scheduleScrollToBottom();
+      }, 140);
+      timeoutIds.add(timeoutId);
+    };
+
+    const onViewportChange = () => {
+      settleScrollToBottom();
+    };
+
+    const vv = window.visualViewport;
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("orientationchange", onViewportChange);
+    window.addEventListener("focusin", onViewportChange);
+    window.addEventListener("focusout", onViewportChange);
+    vv?.addEventListener("resize", onViewportChange);
+    vv?.addEventListener("scroll", onViewportChange);
+
+    return () => {
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("orientationchange", onViewportChange);
+      window.removeEventListener("focusin", onViewportChange);
+      window.removeEventListener("focusout", onViewportChange);
+      vv?.removeEventListener("resize", onViewportChange);
+      vv?.removeEventListener("scroll", onViewportChange);
+    };
+  }, [autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled && !isComposerFocused) return;
+    scheduleScrollToBottom();
+    const timeoutId = window.setTimeout(() => {
+      scheduleScrollToBottom();
+    }, 120);
+    return () => window.clearTimeout(timeoutId);
+  }, [composerReservePx, autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled && !isComposerFocused) return;
+
+    const ensurePinned = () => {
+      const distance = getDistanceFromBottom();
+      if (distance > 6 || distance < -48) {
+        scheduleScrollToBottom();
+      }
+    };
+
+    ensurePinned();
+    const intervalId = window.setInterval(ensurePinned, 320);
+    const onViewportChange = () => ensurePinned();
+    const vv = window.visualViewport;
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("orientationchange", onViewportChange);
+    vv?.addEventListener("resize", onViewportChange);
+    vv?.addEventListener("scroll", onViewportChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("orientationchange", onViewportChange);
+      vv?.removeEventListener("resize", onViewportChange);
+      vv?.removeEventListener("scroll", onViewportChange);
+    };
+  }, [autoScrollEnabled, isComposerFocused, getDistanceFromBottom, scheduleScrollToBottom]);
 
   const adjustTextareaHeight = () => {
     const el = inputRef.current;
@@ -626,6 +884,11 @@ export default function ChatPage() {
       `vvPageTop=${viewportDebug.vvPageTop}`,
       `header=[${viewportDebug.headerTop},${viewportDebug.headerBottom}]`,
       `composer=[${viewportDebug.composerTop},${viewportDebug.composerBottom}]`,
+      `scroll=[top:${viewportDebug.scrollTop},height:${viewportDebug.scrollHeight},client:${viewportDebug.scrollClientHeight},dist:${viewportDebug.distanceFromBottom}]`,
+      `endBottom=${viewportDebug.endBottom} endToComposerGap=${viewportDebug.endToComposerGap}`,
+      `autoScrollEnabled=${viewportDebug.autoScrollEnabled}`,
+      `keyboardLikelyOpen=${viewportDebug.keyboardLikelyOpen}`,
+      `vars appVh=${viewportDebug.appVh} composerPad=${viewportDebug.composerPadBottom} chatTail=${viewportDebug.chatTailOffset}`,
       "",
     ].join("\n");
     const payload = `${header}${viewportLogLines.join("\n")}`;
@@ -662,16 +925,21 @@ export default function ChatPage() {
     }
   };
 
-  const toggleViewportDebug = () => {
-    setIsViewportDebugEnabled((prev) => {
-      const next = !prev;
-      if (next) {
-        window.localStorage.setItem(VIEWPORT_DEBUG_STORAGE_KEY, "1");
-      } else {
-        window.localStorage.removeItem(VIEWPORT_DEBUG_STORAGE_KEY);
-      }
-      return next;
-    });
+  const setViewportDebugCapture = (enabled: boolean) => {
+    setIsViewportDebugEnabled(enabled);
+    if (enabled) {
+      window.localStorage.setItem(VIEWPORT_DEBUG_STORAGE_KEY, "1");
+    } else {
+      window.localStorage.removeItem(VIEWPORT_DEBUG_STORAGE_KEY);
+      setIsViewportDebugPanelOpen(false);
+    }
+  };
+
+  const toggleViewportDebugPanel = () => {
+    if (!isViewportDebugEnabled) {
+      setViewportDebugCapture(true);
+    }
+    setIsViewportDebugPanelOpen((prev) => !prev);
   };
 
   const handleViewportDebugTap = () => {
@@ -681,7 +949,12 @@ export default function ChatPage() {
     viewportDebugTapCountRef.current += 1;
     if (viewportDebugTapCountRef.current >= 5) {
       viewportDebugTapCountRef.current = 0;
-      toggleViewportDebug();
+      if (!isViewportDebugEnabled) {
+        setViewportDebugCapture(true);
+        setIsViewportDebugPanelOpen(true);
+      } else {
+        setIsViewportDebugPanelOpen((prev) => !prev);
+      }
       return;
     }
     viewportDebugTapTimerRef.current = window.setTimeout(() => {
@@ -760,17 +1033,375 @@ export default function ChatPage() {
     saveBudgetState(activeUserId, nextState);
   };
 
+  const ensureDayAndSync = async () => {
+    const ensured = ensureCurrentDay();
+    if (!ensured.rotated) return;
+    setCoachPlanVersion((prev) => prev + 1);
+    if (!authUser?.id) return;
+    void saveCloudChatState(authUser.id, {
+      events: readEventsFromStorage(activeChatStorageKey),
+      coachPlan: ensured.plan,
+    }).catch(() => undefined);
+  };
+
+  const reopenDayIfNeeded = async (event: ChatEvent) => {
+    if (event.role !== "user") return;
+    const plan = getCoachPlan();
+    if (!plan?.signals?.today?.dayClosed) return;
+    const dayId = plan.time?.current_day_id ?? buildDayId();
+    const dateISO = dayId.split("@")[0];
+    if (!dateISO) return;
+    const text = getEventText(event).trim();
+    if (!text) return;
+    const normalized = text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    if (
+      /\bayer\b/.test(normalized) ||
+      /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/.test(normalized) ||
+      /\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/.test(normalized)
+    ) {
+      return;
+    }
+    const classification = classifyMessage(text);
+    const isStructuredInput =
+      classification !== "unknown" || event.type === "voice" || event.type === "image" || event.type === "file";
+    if (!isStructuredInput) return;
+    const previousDay = plan.history?.days?.[dayId];
+    const nextPlan = upsertCoachPlan({
+      signals: {
+        today: {
+          dayId,
+          dateISO,
+          dayClosed: false,
+        },
+      },
+      ...(previousDay
+        ? {
+            history: {
+              days: {
+                [dayId]: {
+                  ...previousDay,
+                  closed: false,
+                  autoReopened: true,
+                  updatedAtISO: new Date().toISOString(),
+                },
+              },
+            },
+          }
+        : {}),
+    });
+    setCoachPlanVersion((prev) => prev + 1);
+    if (!authUser?.id) return;
+    void saveCloudChatState(authUser.id, {
+      events: readEventsFromStorage(activeChatStorageKey),
+      coachPlan: nextPlan,
+    }).catch(() => undefined);
+  };
+
+  const applyParsedFoodMutation = async (mutation: Exclude<ParsedFoodMutation, { kind: "none" }>) => {
+    const plan = getCoachPlan();
+    const currentDayId = plan?.time?.current_day_id ?? buildDayId();
+    const dayId = mutation.day.dayId;
+    const dateISO = mutation.day.dateISO;
+    const existingDay = plan?.history?.days?.[dayId];
+    const existingEntries = existingDay?.foodEntries ?? [];
+    const mergedEntries = mergeFoodEntries(existingEntries, mutation);
+    const totals = recomputeFromEntries(mergedEntries);
+    const isCurrentDay = dayId === currentDayId;
+
+    const nextPlan = upsertCoachPlan({
+      history: {
+        days: {
+          [dayId]: {
+            dayId,
+            dateISO,
+            kcalIn: totals.intakeKcal,
+            kcalOut: existingDay?.kcalOut ?? 0,
+            balance: totals.intakeKcal - (existingDay?.kcalOut ?? 0),
+            proteinG: totals.proteinG,
+            carbsG: totals.carbsG,
+            fatG: totals.fatG,
+            activityKcal: existingDay?.activityKcal ?? existingDay?.kcalOut ?? 0,
+            mealsCount: totals.mealsCount,
+            foodEntries: mergedEntries,
+            closed: existingDay?.closed ?? false,
+            createdAtISO: existingDay?.createdAtISO ?? new Date().toISOString(),
+            updatedAtISO: new Date().toISOString(),
+            ...(existingDay?.nutritionSource ? { nutritionSource: existingDay.nutritionSource } : {}),
+          },
+        },
+      },
+      ...(isCurrentDay
+        ? {
+            signals: {
+              today: {
+                dayId,
+                dateISO,
+                intakeKcal: totals.intakeKcal,
+                proteinG: totals.proteinG,
+                carbsG: totals.carbsG,
+                fatG: totals.fatG,
+                foods: mergedEntries.map((entry) => entry.name),
+                nutritionSource: "database",
+              },
+            },
+          }
+        : {}),
+    });
+    setCoachPlanVersion((prev) => prev + 1);
+    if (!authUser?.id) return;
+    await saveCloudChatState(authUser.id, {
+      events: readEventsFromStorage(activeChatStorageKey),
+      coachPlan: nextPlan,
+    }).catch(() => undefined);
+  };
+
+  const applyFoodMutationFromEvent = async (
+    event: ChatEvent
+  ): Promise<{ status: "none" | "applied" | "needs_confirmation"; prompt?: string }> => {
+    if (event.role !== "user") return { status: "none" };
+    const text =
+      event.type === "text"
+        ? event.text
+        : event.type === "voice"
+        ? event.content
+        : "";
+    if (!text.trim()) return { status: "none" };
+
+    const plan = getCoachPlan();
+    const timezone = plan?.time?.timezone ?? LIA_TIMEZONE;
+    const currentDayId = plan?.time?.current_day_id ?? buildDayId(new Date(), timezone);
+    const mutationTarget = parseFoodMutation({
+      text,
+      timezone,
+      currentDayId,
+      existingEntriesByDayId: Object.fromEntries(
+        Object.entries(plan?.history?.days ?? {}).map(([dayId, snapshot]) => [
+          dayId,
+          snapshot.foodEntries ?? [],
+        ])
+      ),
+    });
+    if (mutationTarget.kind === "none") return { status: "none" };
+    if (mutationTarget.day.requiresConfirmation) {
+      setPendingRetroFoodMutation(mutationTarget);
+      const label = mutationTarget.day.confirmationLabel ?? mutationTarget.day.dateISO;
+      return { status: "needs_confirmation", prompt: `¿Lo registro en ${label}? (si/no)` };
+    }
+    await applyParsedFoodMutation(mutationTarget);
+    return { status: "applied" };
+  };
+
+  const closeDayDeterministically = async (withUser: ChatEvent[], turnId: string): Promise<ChatEvent> => {
+    const ensured = ensureCurrentDay();
+    const basePlan = ensured.plan;
+    const dayId = basePlan.time?.current_day_id ?? buildDayId();
+    const dateISO = dayId.split("@")[0] ?? getLocalDateKey();
+    const metrics = buildDashboardMetrics(withUser, basePlan);
+    const nowIso = new Date().toISOString();
+    const mealsCount = (basePlan.signals?.today?.foods ?? []).length;
+    const existingDaySnapshot = basePlan.history?.days?.[dayId];
+    const snapshot = {
+      dayId,
+      dateISO,
+      kcalIn: metrics.daily.intakeKcal,
+      kcalOut: metrics.daily.burnKcal,
+      balance: metrics.daily.intakeKcal - metrics.daily.burnKcal,
+      ...(basePlan.history?.days?.[dayId]?.proteinEst !== undefined
+        ? { proteinEst: basePlan.history.days[dayId].proteinEst }
+        : {}),
+      ...(typeof basePlan.signals?.today?.proteinG === "number" ? { proteinG: basePlan.signals.today.proteinG } : {}),
+      ...(typeof basePlan.signals?.today?.carbsG === "number" ? { carbsG: basePlan.signals.today.carbsG } : {}),
+      ...(typeof basePlan.signals?.today?.fatG === "number" ? { fatG: basePlan.signals.today.fatG } : {}),
+      ...(typeof basePlan.signals?.today?.fiberG === "number" ? { fiberG: basePlan.signals.today.fiberG } : {}),
+      ...(typeof basePlan.signals?.today?.magnesiumMg === "number"
+        ? { magnesiumMg: basePlan.signals.today.magnesiumMg }
+        : {}),
+      ...(typeof basePlan.signals?.today?.omega3G === "number" ? { omega3G: basePlan.signals.today.omega3G } : {}),
+      ...(typeof basePlan.signals?.today?.sodiumMg === "number" ? { sodiumMg: basePlan.signals.today.sodiumMg } : {}),
+      ...(basePlan.signals?.today?.nutritionSource ? { nutritionSource: basePlan.signals.today.nutritionSource } : {}),
+      activityKcal: metrics.daily.burnKcal,
+      mealsCount,
+      ...(Array.isArray(existingDaySnapshot?.foodEntries) && existingDaySnapshot.foodEntries.length > 0
+        ? { foodEntries: existingDaySnapshot.foodEntries }
+        : {}),
+      closed: true,
+      createdAtISO: basePlan.history?.days?.[dayId]?.createdAtISO ?? nowIso,
+      updatedAtISO: nowIso,
+    };
+    const nextPlan = upsertCoachPlan({
+      signals: {
+        today: {
+          dayId,
+          dateISO,
+          intakeKcal: metrics.daily.intakeKcal,
+          burnKcal: metrics.daily.burnKcal,
+          ...(metrics.daily.lastWeightKg !== null ? { weightKg: metrics.daily.lastWeightKg } : {}),
+          ...(typeof basePlan.signals?.today?.proteinG === "number" ? { proteinG: basePlan.signals.today.proteinG } : {}),
+          ...(typeof basePlan.signals?.today?.carbsG === "number" ? { carbsG: basePlan.signals.today.carbsG } : {}),
+          ...(typeof basePlan.signals?.today?.fatG === "number" ? { fatG: basePlan.signals.today.fatG } : {}),
+          ...(typeof basePlan.signals?.today?.fiberG === "number" ? { fiberG: basePlan.signals.today.fiberG } : {}),
+          ...(typeof basePlan.signals?.today?.magnesiumMg === "number"
+            ? { magnesiumMg: basePlan.signals.today.magnesiumMg }
+            : {}),
+          ...(typeof basePlan.signals?.today?.omega3G === "number" ? { omega3G: basePlan.signals.today.omega3G } : {}),
+          ...(typeof basePlan.signals?.today?.sodiumMg === "number" ? { sodiumMg: basePlan.signals.today.sodiumMg } : {}),
+          ...(basePlan.signals?.today?.nutritionSource ? { nutritionSource: basePlan.signals.today.nutritionSource } : {}),
+          dayClosed: true,
+        },
+      },
+      history: {
+        days: {
+          [dayId]: snapshot,
+        },
+      },
+    });
+    setCoachPlanVersion((prev) => prev + 1);
+    if (authUser?.id) {
+      await saveCloudChatState(authUser.id, {
+        events: withUser,
+        coachPlan: nextPlan,
+      }).catch(() => undefined);
+    }
+
+    const todayLine =
+      metrics.daily.targetKcal !== null
+        ? `${metrics.daily.intakeKcal}/${metrics.daily.targetKcal} kcal`
+        : `${metrics.daily.intakeKcal} kcal`;
+    const balance = metrics.daily.intakeKcal - metrics.daily.burnKcal;
+    const balanceLine = `${balance >= 0 ? "+" : ""}${balance} kcal netas`;
+    const weightLine =
+      metrics.daily.lastWeightKg !== null ? `Peso: ${metrics.daily.lastWeightKg} kg` : "Peso: sin registro";
+    const responseText = [
+      "Dia cerrado (determinista).",
+      `Totales: ${todayLine}.`,
+      `Actividad: ${metrics.daily.burnKcal} kcal.`,
+      `Balance: ${balanceLine}.`,
+      weightLine,
+      "Manana seguimos con el nuevo registro.",
+    ].join("\n");
+    return { ...(createAssistantTextEvent(responseText) as ChatEvent), turnId };
+  };
+
   const sendEvent = async (eventToSend: ChatEvent) => {
     if (isStreaming) return false;
-
-    const reservation = reserveBudget(getEventText(eventToSend));
-    if (!reservation) return false;
+    await ensureDayAndSync();
 
     const turnId = createId();
     const userEvent = { ...eventToSend, turnId };
+    const userText = userEvent.type === "text" ? userEvent.text : "";
+
+    if (pendingRetroFoodMutation && userEvent.type === "text" && userEvent.role === "user") {
+      const withUser = [...events, userEvent];
+      setEvents(withUser);
+      persistEvents(withUser);
+      if (isYesConfirmation(userText)) {
+        if (pendingRetroFoodMutation.kind !== "none") {
+          await applyParsedFoodMutation(pendingRetroFoodMutation);
+        }
+        setPendingRetroFoodMutation(null);
+        const assistantEvent = {
+          ...(createAssistantTextEvent("Hecho. Registro retroactivo guardado.") as ChatEvent),
+          turnId,
+        };
+        const next = [...withUser, assistantEvent];
+        setEvents(next);
+        persistEvents(next);
+        return true;
+      }
+      if (isNoConfirmation(userText)) {
+        setPendingRetroFoodMutation(null);
+        const assistantEvent = {
+          ...(createAssistantTextEvent("Entendido, no lo registro retroactivamente.") as ChatEvent),
+          turnId,
+        };
+        const next = [...withUser, assistantEvent];
+        setEvents(next);
+        persistEvents(next);
+        return true;
+      }
+      const assistantEvent = {
+        ...(createAssistantTextEvent("Responde solo si o no para confirmar el registro retroactivo.") as ChatEvent),
+        turnId,
+      };
+      const next = [...withUser, assistantEvent];
+      setEvents(next);
+      persistEvents(next);
+      return true;
+    }
+
+    if (
+      userEvent.type === "text" &&
+      userEvent.role === "user" &&
+      isCloseDayCommand(userEvent.text)
+    ) {
+      const withUser = [...events, userEvent];
+      setEvents(withUser);
+      persistEvents(withUser);
+      const assistantEvent = await closeDayDeterministically(withUser, turnId);
+      const next = [...withUser, assistantEvent];
+      setEvents(next);
+      persistEvents(next);
+      return true;
+    }
+
+    if (
+      userEvent.type === "text" &&
+      userEvent.role === "user" &&
+      isReopenDayCommand(userEvent.text)
+    ) {
+      const withUser = [...events, userEvent];
+      setEvents(withUser);
+      persistEvents(withUser);
+      const plan = getCoachPlan();
+      const dayId = plan?.time?.current_day_id ?? buildDayId();
+      const dateISO = dayId.split("@")[0] ?? getLocalDateKey();
+      const nextPlan = upsertCoachPlan({
+        signals: {
+          today: {
+            dayId,
+            dateISO,
+            dayClosed: false,
+          },
+        },
+      });
+      setCoachPlanVersion((prev) => prev + 1);
+      if (authUser?.id) {
+        await saveCloudChatState(authUser.id, {
+          events: withUser,
+          coachPlan: nextPlan,
+        }).catch(() => undefined);
+      }
+      const assistantEvent = {
+        ...(createAssistantTextEvent("Dia reabierto. Puedes seguir registrando comida y actividad.") as ChatEvent),
+        turnId,
+      };
+      const next = [...withUser, assistantEvent];
+      setEvents(next);
+      persistEvents(next);
+      return true;
+    }
+
+    const reservation = reserveBudget(getEventText(userEvent));
+    if (!reservation) return false;
+
     const withUser = [...events, userEvent];
     setEvents(withUser);
     persistEvents(withUser);
+    await reopenDayIfNeeded(userEvent);
+    const foodMutationResult = await applyFoodMutationFromEvent(userEvent);
+    if (foodMutationResult.status === "needs_confirmation") {
+      const assistantEvent = {
+        ...(createAssistantTextEvent(foodMutationResult.prompt ?? "¿Confirmas el registro retroactivo? (si/no)") as ChatEvent),
+        turnId,
+      };
+      const next = [...withUser, assistantEvent];
+      setEvents(next);
+      persistEvents(next);
+      return true;
+    }
     await captureMemoryPatch(userEvent);
 
     setIsStreaming(true);
@@ -799,7 +1430,6 @@ export default function ChatPage() {
         persistEvents(next);
         return next;
       });
-      syncSignalsFromAssistantReply(getEventText(assistantEvent));
 
       return true;
     } finally {
@@ -824,43 +1454,32 @@ export default function ChatPage() {
       todayISO: getLocalDateKey(),
     });
     if (!patch) return;
+    const dayId = getCoachPlan()?.time?.current_day_id ?? buildDayId();
+    const dateISO = dayId.split("@")[0] ?? getLocalDateKey();
     const nextPlan = upsertCoachPlan(patch);
+    const normalizedPlan = upsertCoachPlan({
+      signals: {
+        today: {
+          ...(nextPlan.signals?.today ?? {}),
+          dayId,
+          dateISO,
+        },
+      },
+    });
     setCoachPlanVersion((prev) => prev + 1);
     if (!authUser?.id) return;
     void saveCloudChatState(authUser.id, {
       events: readEventsFromStorage(activeChatStorageKey),
-      coachPlan: nextPlan,
+      coachPlan: normalizedPlan,
     })
       .then(() => setCloudSyncError(null))
       .catch((error) => {
         setCloudSyncError(buildCloudSyncErrorMessage("plan", error));
       });
   };
-  const syncSignalsFromAssistantReply = (text: string) => {
-    const intakeKcal = extractAssistantIntakeKcal(text);
-    if (intakeKcal === null) return;
-    const patch: Partial<CoachPlan> = {
-      signals: {
-        today: {
-          dateISO: getLocalDateKey(),
-          intakeKcal,
-        },
-      },
-    };
-    const nextPlan = upsertCoachPlan(patch);
-    setCoachPlanVersion((prev) => prev + 1);
-    if (!authUser?.id) return;
-    void saveCloudChatState(authUser.id, {
-      events: readEventsFromStorage(activeChatStorageKey),
-      coachPlan: nextPlan,
-    })
-      .then(() => setCloudSyncError(null))
-      .catch((error) => {
-        setCloudSyncError(buildCloudSyncErrorMessage("signals", error));
-      });
-  };
     const sendPendingAttachment = async () => {
     if (!pendingAttachment) return false;
+    await ensureDayAndSync();
     const turnId = createId();
 
     if (pendingAttachment.type === "image") {
@@ -889,6 +1508,7 @@ export default function ChatPage() {
       src: pendingAttachment.src,
       note: pendingNote || undefined,
     });
+    await reopenDayIfNeeded(fileEvent);
 
     clearPendingAttachment();
     setIsStreaming(true);
@@ -919,7 +1539,6 @@ export default function ChatPage() {
         persistEvents(next);
         return next;
       });
-      syncSignalsFromAssistantReply(getEventText(assistantEvent));
 
       return true;
     } finally {
@@ -1115,10 +1734,27 @@ export default function ChatPage() {
 
   const qaDisabled = Boolean(pendingAttachment) || isStreaming;
   const selectedFiles = events.filter((event) => isSelectedFileEvent(event, selectedFileIds));
-  const dateLabel = buildDateLabel();
   const welcomeMessage = LIA_WELCOME_MESSAGE;
   const coachPlan = hasHydrated ? getCoachPlan() : null;
   const dashboardMetrics = useMemo(() => buildDashboardMetrics(events, coachPlan), [events, coachPlan]);
+  const nutritionHint = useMemo(() => {
+    const n = dashboardMetrics.nutrition;
+    const structured = n.source === "label" || n.source === "database" || n.source === "manual";
+    if (!structured) return "Sin macros/micros estructurados.";
+    const macros = [
+      typeof n.macros.proteinG === "number" ? `P ${Math.round(n.macros.proteinG)}g` : "",
+      typeof n.macros.carbsG === "number" ? `C ${Math.round(n.macros.carbsG)}g` : "",
+      typeof n.macros.fatG === "number" ? `G ${Math.round(n.macros.fatG)}g` : "",
+    ].filter(Boolean);
+    const micros = [
+      typeof n.micros.magnesiumMg === "number" ? `Mg ${Math.round(n.micros.magnesiumMg)}mg` : "",
+      typeof n.micros.omega3G === "number" ? `Omega-3 ${n.micros.omega3G.toFixed(1)}g` : "",
+      typeof n.micros.sodiumMg === "number" ? `Na ${Math.round(n.micros.sodiumMg)}mg` : "",
+    ].filter(Boolean);
+    const left = macros.length > 0 ? macros.join(" · ") : "Macros N/D";
+    const right = micros.length > 0 ? micros.join(" · ") : "Micros N/D";
+    return `${left} | ${right} (${n.source})`;
+  }, [dashboardMetrics.nutrition]);
   const summaryItems = useMemo(
     () =>
     summaryMode === "daily"
@@ -1133,15 +1769,15 @@ export default function ChatPage() {
             chart: dashboardMetrics.weekly.intakeKcal,
             hint:
               dashboardMetrics.daily.targetKcal !== null
-                ? `Base ${dashboardMetrics.daily.basalKcal} · GET ${dashboardMetrics.daily.tdeeKcal}`
+                ? `Base ${dashboardMetrics.daily.basalKcal} · GET ${dashboardMetrics.daily.tdeeKcal}. ${nutritionHint}`
                 : "Falta perfil.",
           },
           {
             key: "activity" as const,
             label: "Actividad",
-            value: `${dashboardMetrics.daily.burnKcal} kcal`,
+            value: `Real ${dashboardMetrics.daily.burnKcal} kcal`,
             chart: dashboardMetrics.weekly.burnKcal,
-            hint: "Sesiones registradas.",
+            hint: `Plan ${dashboardMetrics.daily.plannedBurnKcal} · Real ${dashboardMetrics.daily.burnKcal} kcal`,
           },
           {
             key: "weight" as const,
@@ -1171,9 +1807,9 @@ export default function ChatPage() {
           {
             key: "activity" as const,
             label: "Actividad",
-            value: `${sumSeries(dashboardMetrics.weekly.burnKcal)} kcal sem`,
+            value: `Real ${sumSeries(dashboardMetrics.weekly.burnKcal)} kcal sem`,
             chart: dashboardMetrics.weekly.burnKcal,
-            hint: "Gasto semanal.",
+            hint: `Plan ${sumSeries(dashboardMetrics.weekly.plannedBurnKcal)} · Real ${sumSeries(dashboardMetrics.weekly.burnKcal)} kcal sem`,
           },
           {
             key: "weight" as const,
@@ -1189,7 +1825,7 @@ export default function ChatPage() {
                 : "Sin tendencia",
           },
         ],
-    [dashboardMetrics, summaryMode]
+    [dashboardMetrics, nutritionHint, summaryMode]
   );
 
   const toggleSummaryCardMode = (key: SummaryCardKey) => {
@@ -1204,13 +1840,23 @@ export default function ChatPage() {
     }));
   };
 
+  if (showBootSplash) {
+    return (
+      <div className="lia-boot-splash" role="status" aria-live="polite" aria-label="Cargando chat">
+        <div className="lia-boot-splash__core" aria-hidden="true">
+          <div className="lia-wordmark lia-boot-splash__logo">
+            <span>L</span>
+            <span>I</span>
+            <span>A</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="app-bg overflow-hidden text-slate-900"
-      style={{
-        height: "100lvh",
-        minHeight: "100lvh",
-      }}
+      className="mobile-app-shell app-bg h-[var(--app-vh)] overflow-hidden text-slate-900"
     >
       <div className="mx-auto flex h-full w-full max-w-[520px] flex-col overflow-hidden px-3 pb-0">
         <div
@@ -1419,7 +2065,7 @@ export default function ChatPage() {
               <p className="mt-1 whitespace-pre-wrap">{cloudSyncError}</p>
             </div>
           )}
-          {isViewportDebugEnabled && (
+          {isViewportDebugEnabled && isViewportDebugPanelOpen && (
             <div className="mt-2 rounded-2xl border border-slate-500 bg-slate-50/98 p-3 text-[10px] text-slate-950">
               <div className="flex items-center justify-between gap-2">
                 <p className="font-semibold">Debug Viewport</p>
@@ -1427,9 +2073,16 @@ export default function ChatPage() {
                   <button
                     type="button"
                     className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white"
-                    onClick={toggleViewportDebug}
+                    onClick={toggleViewportDebugPanel}
                   >
                     Ocultar
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-rose-700 bg-rose-700 px-2 py-1 text-[10px] font-semibold text-white"
+                    onClick={() => setViewportDebugCapture(false)}
+                  >
+                    Detener
                   </button>
                   <button
                     type="button"
@@ -1489,6 +2142,15 @@ export default function ChatPage() {
               <p className="mt-1 whitespace-pre-wrap">
                 {`header=[${viewportDebug.headerTop}, ${viewportDebug.headerBottom}] composer=[${viewportDebug.composerTop}, ${viewportDebug.composerBottom}]`}
               </p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {`scroll=[top:${viewportDebug.scrollTop} height:${viewportDebug.scrollHeight} client:${viewportDebug.scrollClientHeight} dist:${viewportDebug.distanceFromBottom}]`}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {`endBottom=${viewportDebug.endBottom} gap(end->composer)=${viewportDebug.endToComposerGap} auto=${viewportDebug.autoScrollEnabled ? "1" : "0"} kbd=${viewportDebug.keyboardLikelyOpen ? "1" : "0"}`}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {`vars appVh=${viewportDebug.appVh} composerPad=${viewportDebug.composerPadBottom} chatTail=${viewportDebug.chatTailOffset}`}
+              </p>
               <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-900 p-2 text-slate-100">
                 {viewportLogLines.slice(-8).join("\n")}
               </pre>
@@ -1505,10 +2167,30 @@ export default function ChatPage() {
           <main
             ref={scrollRef}
             onScroll={handleScroll}
+            onTouchStart={() => {
+              userScrollIntentRef.current = true;
+            }}
+            onTouchMove={() => {
+              userScrollIntentRef.current = true;
+            }}
+            onTouchEnd={() => {
+              window.setTimeout(() => {
+                userScrollIntentRef.current = false;
+              }, 120);
+            }}
+            onTouchCancel={() => {
+              userScrollIntentRef.current = false;
+            }}
+            onWheel={() => {
+              userScrollIntentRef.current = true;
+              window.setTimeout(() => {
+                userScrollIntentRef.current = false;
+              }, 120);
+            }}
             className="chat-scroll mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
             style={{
               paddingBottom:
-                `calc(var(--composer-pad-bottom, calc(env(safe-area-inset-bottom) + 2px)) + ${CHAT_MAIN_RESERVE_PX}px + var(--chat-tail-offset, 0px))`,
+                `calc(${composerReservePx}px + var(--chat-tail-offset, 0px))`,
             }}
           >
             <ul className="message-list px-1 pb-1">
@@ -1765,9 +2447,16 @@ export default function ChatPage() {
                   onChange={(event) => setInput(event.target.value)}
                   onFocus={() => {
                     setIsComposerFocused(true);
+                    setAutoScrollEnabled(true);
+                    scheduleScrollToBottom();
+                    window.setTimeout(() => {
+                      scheduleScrollToBottom();
+                    }, 120);
                   }}
                   onBlur={() => {
                     setIsComposerFocused(false);
+                    setAutoScrollEnabled(true);
+                    scheduleScrollToBottom();
                   }}
                   onKeyDown={handleKeyDown}
                   placeholder="Escribe aquí..."
@@ -1843,17 +2532,6 @@ export default function ChatPage() {
       </div>
     </div>
   );
-}
-
-function buildDateLabel() {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("es-ES", {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
-  });
-  const raw = formatter.format(now);
-  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 function readDisplayModeDebugSnapshot(): DisplayModeDebugSnapshot {
@@ -2100,10 +2778,23 @@ function mergeCoachPlans(localPlan: CoachPlan | null, cloudPlan: CoachPlan | nul
     typeof mergedToday.dateISO === "string" && mergedToday.dateISO
       ? { today: { ...mergedToday, dateISO: mergedToday.dateISO } }
       : undefined;
+  const mergedHistoryDays = {
+    ...(localPlan.history?.days ?? {}),
+    ...(cloudPlan.history?.days ?? {}),
+  };
+  const mergedRoutines = {
+    ...(localPlan.routines ?? {}),
+    ...(cloudPlan.routines ?? {}),
+  };
+  const mergedTime = {
+    ...(localPlan.time ?? {}),
+    ...(cloudPlan.time ?? {}),
+  };
 
   return {
     ...localPlan,
     ...cloudPlan,
+    ...(Object.keys(mergedTime).length > 0 ? { time: mergedTime as NonNullable<CoachPlan["time"]> } : {}),
     physicalProfile: {
       ...(localPlan.physicalProfile ?? {}),
       ...(cloudPlan.physicalProfile ?? {}),
@@ -2120,7 +2811,9 @@ function mergeCoachPlans(localPlan: CoachPlan | null, cloudPlan: CoachPlan | nul
       ...(localPlan.preferences ?? {}),
       ...(cloudPlan.preferences ?? {}),
     } as CoachPlan["preferences"],
+    ...(Object.keys(mergedRoutines).length > 0 ? { routines: mergedRoutines } : {}),
     ...(signals ? { signals } : {}),
+    ...(Object.keys(mergedHistoryDays).length > 0 ? { history: { days: mergedHistoryDays } } : {}),
   };
 }
 
@@ -2151,11 +2844,41 @@ function getBudgetStorageKey(userId: string, dateKey: string) {
 }
 
 function getLocalDateKey() {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  const timezone = getCoachPlan()?.time?.timezone ?? getDefaultTimezone() ?? LIA_TIMEZONE;
+  return getDateISOInTimezone(new Date(), timezone);
+}
+
+function isCloseDayCommand(text: string): boolean {
+  const normalized = normalizeCommandText(text);
+  return (
+    normalized.includes("cierra el dia") ||
+    normalized.includes("cerrar dia") ||
+    normalized.includes("finaliza el dia")
+  );
+}
+
+function isReopenDayCommand(text: string): boolean {
+  const normalized = normalizeCommandText(text);
+  return normalized.includes("reabre el dia") || normalized.includes("reabrir dia");
+}
+
+function normalizeCommandText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isYesConfirmation(text: string): boolean {
+  const normalized = normalizeCommandText(text);
+  return normalized === "si" || normalized === "sí" || normalized === "ok" || normalized === "vale";
+}
+
+function isNoConfirmation(text: string): boolean {
+  const normalized = normalizeCommandText(text);
+  return normalized === "no" || normalized === "cancelar";
 }
 
 function loadBudgetState(userId: string): BudgetState {
@@ -2224,39 +2947,6 @@ function buildBudgetNotice(state: BudgetState, reason: "tokens" | "messages" | "
 function buildBudgetWarning(state: BudgetState) {
   const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
   return `Aviso: has superado $${DAILY_COST_WARNING.toFixed(2)} de coste estimado hoy. ${costLine}.`;
-}
-
-function extractAssistantIntakeKcal(text: string): number | null {
-  const normalized = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  if (!/kcal|calorias?|caloria/.test(normalized)) return null;
-
-  // Skip ranges like "1800-2000" or "1800 a 2000".
-  if (/\b\d{2,4}\s*(?:-|a)\s*\d{2,4}\s*(kcal|calorias?|caloria)\b/.test(normalized)) return null;
-
-  const labelNoUnit = normalized.match(
-    /\b(?:calorias?\s+consumidas?|consumo|ingesta(?:\s+total)?)\s*[:=]?\s*(\d{2,4})\b/
-  );
-  if (labelNoUnit) {
-    const value = Number(labelNoUnit[1]);
-    if (Number.isFinite(value) && value >= 200 && value <= 8000) return value;
-  }
-
-  const targeted = normalized.match(
-    /\b(?:total|ingesta|consumo|consumidas?|han sido|fueron|van|llevas)\D{0,24}(\d{2,4})\s*(kcal|calorias?|caloria)\b/
-  );
-  if (targeted) {
-    const value = Number(targeted[1]);
-    if (Number.isFinite(value) && value >= 200 && value <= 8000) return value;
-  }
-
-  const generic = normalized.match(/\b(\d{2,4})\s*(kcal|calorias?|caloria)\b/);
-  if (!generic) return null;
-  const value = Number(generic[1]);
-  if (!Number.isFinite(value) || value < 200 || value > 8000) return null;
-  return value;
 }
 
 

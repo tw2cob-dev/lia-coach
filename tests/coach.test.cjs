@@ -14,6 +14,7 @@ const { buildAIContext } = require("../lib/aiContext.ts");
 const { detectCoachIntent } = require("../lib/chat/coachIntent.ts");
 const { classifyMessage, extractWeight } = require("../lib/parsing.ts");
 const { buildDashboardMetrics } = require("../lib/chat/dashboardMetrics.ts");
+const { parseFoodMutation, mergeFoodEntries, recomputeFromEntries } = require("../lib/nutrition/foodEntryParser.ts");
 const { __test__ } = require("../lib/chat/chatLogic.ts");
 const { COACH_SYSTEM_PROMPT } = require("../lib/prompts/coachPrompt.ts");
 
@@ -201,4 +202,57 @@ test("dashboard metrics prioritize AI memory signals for today", () => {
   assert.equal(metrics.daily.intakeKcal, 2100);
   assert.equal(metrics.daily.burnKcal, 320);
   assert.equal(metrics.daily.lastWeightKg, 90.5);
+});
+
+test("food parser estimates banana medium when grams are missing", () => {
+  const mutation = parseFoodMutation({
+    text: "me comi un platano",
+    timezone: "Europe/Madrid",
+    currentDayId: "2026-02-16@Europe/Madrid",
+    existingEntriesByDayId: {},
+  });
+  assert.equal(mutation.kind, "add");
+  if (mutation.kind !== "add") return;
+  assert.equal(mutation.entry.name, "platano");
+  assert.equal(mutation.entry.isEstimated, true);
+  assert.equal(mutation.entry.grams > 0, true);
+  assert.equal(mutation.entry.kcal > 0, true);
+});
+
+test("food parser correction updates effective totals", () => {
+  const first = parseFoodMutation({
+    text: "me comi un platano",
+    timezone: "Europe/Madrid",
+    currentDayId: "2026-02-16@Europe/Madrid",
+    existingEntriesByDayId: {},
+  });
+  assert.equal(first.kind, "add");
+  if (first.kind !== "add") return;
+  const entries = mergeFoodEntries([], first);
+  const correction = parseFoodMutation({
+    text: "no, era grande, pon 200g",
+    timezone: "Europe/Madrid",
+    currentDayId: "2026-02-16@Europe/Madrid",
+    existingEntriesByDayId: { "2026-02-16@Europe/Madrid": entries },
+  });
+  assert.equal(correction.kind, "correct");
+  if (correction.kind !== "correct") return;
+  const next = mergeFoodEntries(entries, correction);
+  const totals = recomputeFromEntries(next);
+  assert.equal(totals.intakeKcal > first.entry.kcal, true);
+});
+
+test("food parser maps yesterday to retroactive day id", () => {
+  const now = new Date("2026-02-16T12:00:00.000Z");
+  const mutation = parseFoodMutation({
+    text: "ayer comi un huevo",
+    timezone: "Europe/Madrid",
+    currentDayId: "2026-02-16@Europe/Madrid",
+    now,
+    existingEntriesByDayId: {},
+  });
+  assert.equal(mutation.kind, "add");
+  if (mutation.kind !== "add") return;
+  assert.equal(mutation.day.dayId.startsWith("2026-02-15@"), true);
+  assert.equal(mutation.day.isRetroactive, true);
 });

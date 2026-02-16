@@ -18,9 +18,9 @@ export type AIReplyDebug = {
   reason?: string;
 };
 
-const MAX_CHAT_MESSAGES = 12;
+const MAX_CHAT_MESSAGES = 14;
 const MAX_OUTPUT_TOKENS = 220;
-const TEMPERATURE = 0.4;
+const TEMPERATURE = 0.35;
 const MODEL_NAME = "gpt-4o-mini";
 
 export async function generateAssistantReply(args: {
@@ -168,8 +168,8 @@ function buildSystemContent(todaySummary: string, weekSummary: string, userName?
     "Cuando des una cifra de kcal de alimento, escribe la linea completa con el supuesto, por ejemplo: 100 g de pasta cocida = 150 kcal (estimado).",
     "Si faltan datos para calculo energetico, sigue el hilo y enumera faltantes juntos (p. ej. sexo, edad, altura, actividad).",
     "No des objetivo calorico final si aun faltan datos criticos.",
-    "Secuencia: primero completa datos de estimacion energetica (sexo, edad, altura, peso, actividad).",
-    "No pidas comidas del dia hasta completar esa fase.",
+    "Secuencia: completa datos de estimacion energetica (sexo, edad, altura, peso, actividad) sin bloquear el registro diario.",
+    "Puedes registrar comida/ejercicio del dia aunque falten datos criticos; no des objetivo calorico final hasta completar datos.",
     "Si el usuario es basico/no tecnico, evita jerga fisiologica innecesaria.",
     "No des consejos medicos peligrosos; si hay salud o riesgo, recomienda un profesional.",
     LIA_WELCOME_CONTEXT_HINT,

@@ -289,7 +289,11 @@ function buildCoachContext(
   messageText: string
 ): string {
   const recentEvents = formatRecentEvents(context.recentEvents);
-  const styleHint = buildStyleHint(messageText, plan.cognitiveProfile ?? createDefaultCognitiveProfile());
+  const styleHint = buildStyleHint(
+    messageText,
+    plan.cognitiveProfile ?? createDefaultCognitiveProfile(),
+    resolveMaxQuestionsPerTurn(plan)
+  );
   const missingDataHint = buildMissingDataHint(plan.physicalProfile);
   const planHint = isWeeklyPlanRequest(messageText)
     ? "Si piden plan semanal, entrega un plan semanal en bullets para lunes-domingo."
@@ -750,7 +754,7 @@ function buildMissingDataHint(profile?: CoachPlan["physicalProfile"]): string {
   if (missing.length === 0) {
     return "Datos energeticos completos. Ahora si, pide registro de comida y ejercicio del dia para actualizar progreso.";
   }
-  return `Fase actual: completar estimacion energetica. Enumera y pide juntos estos faltantes: ${missing.join(", ")}. No pidas comida del dia todavia.`;
+  return `Fase actual: completar estimacion energetica. Enumera y pide juntos estos faltantes: ${missing.join(", ")}. Puedes registrar comida/ejercicio del dia, pero no cierres objetivo calorico final aun.`;
 }
 
 function clampRange(value: number, min: number, max: number): number | undefined {
@@ -768,7 +772,11 @@ function isSameProfile(a: CognitiveProfile, b: CognitiveProfile): boolean {
   );
 }
 
-function buildStyleHint(messageText: string, profile: CognitiveProfile): string {
+function buildStyleHint(
+  messageText: string,
+  profile: CognitiveProfile,
+  maxQuestionsPerTurn: number
+): string {
   const normalized = normalizeText(messageText);
   const override = parseStyleOverride(normalized);
   const levelHint =
@@ -787,7 +795,17 @@ function buildStyleHint(messageText: string, profile: CognitiveProfile): string 
       : override.estilo === "humor_sutil" || profile.estilo === "humor_sutil"
       ? "Humor sutil permitido: una broma corta maximo."
       : "Tono neutral cercano y maduro.";
-  return `${levelHint} ${styleHint} Trabaja por fases: primero datos energeticos faltantes; luego registro de comida/ejercicio del dia. Nutricion detallada solo bajo peticion explicita.`;
+  return `${levelHint} ${styleHint} Haz como maximo ${maxQuestionsPerTurn} pregunta(s) por turno. Trabaja por fases: primero datos energeticos faltantes; luego registro de comida/ejercicio del dia. Nutricion detallada solo bajo peticion explicita.`;
+}
+
+function resolveMaxQuestionsPerTurn(plan: CoachPlan): number {
+  const configured = plan.preferences?.maxQuestionsPerTurn;
+  if (typeof configured === "number" && Number.isFinite(configured)) {
+    return Math.min(3, Math.max(1, Math.round(configured)));
+  }
+  const level = plan.cognitiveProfile?.nivel_tecnico;
+  if (level === "tecnico" || level === "ultra") return 2;
+  return 1;
 }
 
 export const __test__ = {

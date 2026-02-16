@@ -48,11 +48,13 @@ export async function POST(request: Request) {
       "- weightKg in kg",
       "- activityMinutes in minutes",
       "- intakeKcal and burnKcal as integers when inferable with reasonable confidence.",
+      "- nutrition fields only if explicitly provided in message (label/database/manual input).",
       "Schema:",
       "{",
       '  "physicalProfile"?: { "sex"?: "male"|"female", "ageYears"?: number, "heightCm"?: number, "weightKg"?: number, "activityLevel"?: "sedentary"|"light"|"moderate"|"very" },',
-      '  "signals"?: { "today"?: { "dateISO": "YYYY-MM-DD", "intakeKcal"?: number, "burnKcal"?: number, "weightKg"?: number, "activityMinutes"?: number, "foods"?: string[], "activities"?: string[] } }',
+      '  "signals"?: { "today"?: { "dateISO": "YYYY-MM-DD", "intakeKcal"?: number, "burnKcal"?: number, "weightKg"?: number, "activityMinutes"?: number, "proteinG"?: number, "carbsG"?: number, "fatG"?: number, "fiberG"?: number, "magnesiumMg"?: number, "omega3G"?: number, "sodiumMg"?: number, "nutritionSource"?: "label"|"database"|"manual", "foods"?: string[], "activities"?: string[] } }',
       "}",
+      "Never output nutritionSource unless at least one macro/micro field is present.",
       "If nothing useful is found, return {}.",
     ].join("\n");
 
