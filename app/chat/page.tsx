@@ -1332,7 +1332,7 @@ export default function ChatPage() {
                     onClick={handleLogout}
                     className="mt-4 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700"
                   >
-                    Cerrar sesiÃ³n
+                    Cerrar sesión
                   </button>
                 </div>
               )}
@@ -1378,7 +1378,7 @@ export default function ChatPage() {
             <div className="mt-2 rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
               <p className="font-semibold text-slate-900">Debug IA</p>
               {!lastAIDebug ? (
-                <p className="mt-2 text-slate-500">Sin datos aÃºn. EnvÃ­a un mensaje.</p>
+                <p className="mt-2 text-slate-500">Sin datos aún. Envía un mensaje.</p>
               ) : (
                 <div className="mt-2 space-y-2">
                   <p>
@@ -2205,10 +2205,10 @@ function buildBudgetNotice(state: BudgetState, reason: "tokens" | "messages" | "
   const costLine = `Coste estimado: $${state.cost.toFixed(2)}/$${DAILY_COST_BUDGET.toFixed(2)}`;
   const reasonLine =
     reason === "tokens"
-      ? "Has alcanzado el lÃ­mite diario de tokens."
+      ? "Has alcanzado el límite diario de tokens."
       : reason === "messages"
-      ? "Has alcanzado el lÃ­mite diario de mensajes."
-      : "Has alcanzado el lÃ­mite diario de coste.";
+      ? "Has alcanzado el límite diario de mensajes."
+      : "Has alcanzado el límite diario de coste.";
   return `${reasonLine} ${tokensLine}. ${messagesLine}. ${costLine}.`;
 }
 
