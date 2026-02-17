@@ -15,11 +15,19 @@ export function bindAppViewportHeightVar(): () => void {
       window.innerHeight || 0
     );
     const viewportTop = Math.max(0, window.visualViewport?.offsetTop ?? 0);
+    const viewportBottomInset = Math.max(
+      0,
+      Math.round(window.innerHeight - (viewportTop + visualViewportHeight))
+    );
     const keyboardLikelyOpen =
       viewportTop > 0 || window.innerHeight - visualViewportHeight > 80;
     const viewportHeight = keyboardLikelyOpen ? visualViewportHeight : fullViewportHeight;
     root.style.setProperty("--app-vh", `${Math.round(viewportHeight)}px`);
     root.style.setProperty("--app-vv-top", `${Math.round(viewportTop)}px`);
+    root.style.setProperty(
+      "--vv-bottom-inset",
+      keyboardLikelyOpen ? `${viewportBottomInset}px` : "0px"
+    );
     const composerPadClosed = "calc(env(safe-area-inset-bottom) + 2px)";
     const composerPadFocused = "calc(env(safe-area-inset-bottom) - 25px)";
     root.style.setProperty(

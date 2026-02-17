@@ -3,6 +3,7 @@
 :root {
   --app-vh: 100dvh;
   --app-vv-top: 0px;
+  --vv-bottom-inset: 0px;
   --top-unified: #eef4fb;
   --top-surface-1: #f7faff;
   --top-surface-2: #edf3fb;

@@ -143,6 +143,15 @@ function isSelectedFileEvent(
   return event.type === "file" && selectedIds.includes(event.id) && typeof event.file?.name === "string";
 }
 
+function isLikelyMobileSafari() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const isIOS = /iP(hone|ad|od)/.test(ua);
+  const isWebKit = /WebKit/i.test(ua);
+  const isOtherIOSBrowser = /(CriOS|FxiOS|EdgiOS|OPiOS)/i.test(ua);
+  return isIOS && isWebKit && !isOtherIOSBrowser;
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const [events, setEvents] = useState<ChatEvent[]>([]);
@@ -517,6 +526,7 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    if (showBootSplash) return;
     const node = composerRef.current;
     if (!node) return;
 
@@ -546,7 +556,7 @@ export default function ChatPage() {
       window.removeEventListener("orientationchange", onResize);
       observer?.disconnect();
     };
-  }, [selectedFileIds.length, pendingAttachment, pendingNote, isComposerFocused, isStreaming, input]);
+  }, [showBootSplash, selectedFileIds.length, pendingAttachment, pendingNote, isComposerFocused, isStreaming, input]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -678,10 +688,6 @@ export default function ChatPage() {
   const handleScroll = () => {
     const container = scrollRef.current;
     if (!container) return;
-    if (isComposerFocused) {
-      setAutoScrollEnabled(true);
-      return;
-    }
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     const nearBottom = distanceFromBottom <= SCROLL_THRESHOLD_PX;
@@ -697,16 +703,14 @@ export default function ChatPage() {
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const container = scrollRef.current;
     if (!container) return;
-    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    container.scrollTo({ top: maxTop, behavior });
-    container.scrollTop = maxTop;
-    endRef.current?.scrollIntoView({ block: "end", inline: "nearest", behavior });
-  }, []);
-
-  const getDistanceFromBottom = useCallback(() => {
-    const container = scrollRef.current;
-    if (!container) return 0;
-    return container.scrollHeight - container.scrollTop - container.clientHeight;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+    if (behavior === "auto") {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom > 0) {
+        container.scrollTop += distanceFromBottom;
+      }
+    }
   }, []);
 
   const scheduleScrollToBottom = useCallback(() => {
@@ -729,7 +733,6 @@ export default function ChatPage() {
     if (!hasHydrated) return;
     if (showBootSplash) return;
     if (!scrollRef.current) return;
-    if (events.length === 0 && !isStreaming) return;
 
     initialBottomLockDoneRef.current = true;
     setAutoScrollEnabled(true);
@@ -745,10 +748,10 @@ export default function ChatPage() {
       window.cancelAnimationFrame(rafId);
       window.clearTimeout(timeoutId);
     };
-  }, [hasHydrated, showBootSplash, events.length, isStreaming, scheduleScrollToBottom]);
+  }, [hasHydrated, showBootSplash, scheduleScrollToBottom]);
 
   useEffect(() => {
-    if (!autoScrollEnabled && !isComposerFocused) return;
+    if (!autoScrollEnabled) return;
 
     const timeoutIds = new Set<number>();
     const settleScrollToBottom = () => {
@@ -783,44 +786,57 @@ export default function ChatPage() {
       vv?.removeEventListener("resize", onViewportChange);
       vv?.removeEventListener("scroll", onViewportChange);
     };
-  }, [autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
+  }, [autoScrollEnabled, scheduleScrollToBottom]);
 
   useEffect(() => {
-    if (!autoScrollEnabled && !isComposerFocused) return;
+    if (!autoScrollEnabled) return;
     scheduleScrollToBottom();
     const timeoutId = window.setTimeout(() => {
       scheduleScrollToBottom();
     }, 120);
     return () => window.clearTimeout(timeoutId);
-  }, [composerReservePx, autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
+  }, [composerReservePx, autoScrollEnabled, scheduleScrollToBottom]);
 
   useEffect(() => {
-    if (!autoScrollEnabled && !isComposerFocused) return;
+    if (!hasHydrated || showBootSplash) return;
+    if (!autoScrollEnabled) return;
+    const container = scrollRef.current;
+    if (!container) return;
 
-    const ensurePinned = () => {
-      const distance = getDistanceFromBottom();
-      if (distance > 6 || distance < -48) {
-        scheduleScrollToBottom();
-      }
-    };
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom <= 4) return;
 
-    ensurePinned();
-    const intervalId = window.setInterval(ensurePinned, 320);
-    const onViewportChange = () => ensurePinned();
-    const vv = window.visualViewport;
-    window.addEventListener("resize", onViewportChange);
-    window.addEventListener("orientationchange", onViewportChange);
-    vv?.addEventListener("resize", onViewportChange);
-    vv?.addEventListener("scroll", onViewportChange);
+    scheduleScrollToBottom();
+    const rafId = window.requestAnimationFrame(() => {
+      scheduleScrollToBottom();
+    });
+    const timeoutA = window.setTimeout(() => {
+      scheduleScrollToBottom();
+    }, 140);
+    const timeoutB = window.setTimeout(() => {
+      scheduleScrollToBottom();
+    }, 320);
+    const timeoutSafari = isLikelyMobileSafari()
+      ? window.setTimeout(() => {
+          scheduleScrollToBottom();
+        }, 720)
+      : null;
 
     return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("resize", onViewportChange);
-      window.removeEventListener("orientationchange", onViewportChange);
-      vv?.removeEventListener("resize", onViewportChange);
-      vv?.removeEventListener("scroll", onViewportChange);
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutA);
+      window.clearTimeout(timeoutB);
+      if (timeoutSafari !== null) window.clearTimeout(timeoutSafari);
     };
-  }, [autoScrollEnabled, isComposerFocused, getDistanceFromBottom, scheduleScrollToBottom]);
+  }, [
+    hasHydrated,
+    showBootSplash,
+    autoScrollEnabled,
+    composerReservePx,
+    events.length,
+    scheduleScrollToBottom,
+  ]);
 
   const adjustTextareaHeight = () => {
     const el = inputRef.current;
@@ -2190,7 +2206,7 @@ export default function ChatPage() {
             className="chat-scroll mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
             style={{
               paddingBottom:
-                `calc(${composerReservePx}px + var(--chat-tail-offset, 0px))`,
+                `calc(${composerReservePx}px + var(--chat-tail-offset, 0px) + var(--vv-bottom-inset, 0px))`,
             }}
           >
             <ul className="message-list px-1 pb-1">
@@ -2350,6 +2366,7 @@ export default function ChatPage() {
               void handleSubmit();
             }}
             className="composer-wrap composer-wrap-fixed fixed bottom-0 left-1/2 z-30 mt-1 w-full max-w-[520px] -translate-x-1/2 px-3 pt-1"
+            style={{ bottom: "var(--vv-bottom-inset, 0px)" }}
           >
             {selectedFileIds.length > 0 && (
               <div className="composer-chip mb-3 flex flex-wrap items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-xs text-slate-700 shadow-sm">
@@ -2447,16 +2464,9 @@ export default function ChatPage() {
                   onChange={(event) => setInput(event.target.value)}
                   onFocus={() => {
                     setIsComposerFocused(true);
-                    setAutoScrollEnabled(true);
-                    scheduleScrollToBottom();
-                    window.setTimeout(() => {
-                      scheduleScrollToBottom();
-                    }, 120);
                   }}
                   onBlur={() => {
                     setIsComposerFocused(false);
-                    setAutoScrollEnabled(true);
-                    scheduleScrollToBottom();
                   }}
                   onKeyDown={handleKeyDown}
                   placeholder="Escribe aquí..."
