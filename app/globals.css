@@ -775,6 +775,45 @@ html[data-theme="dark"] .app-bg {
   will-change: auto;
 }
 
+.lia-boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(126, 255, 235, 0.13), rgba(126, 255, 235, 0) 45%),
+    linear-gradient(160deg, #070b12, #0d1422 45%, #121b2c 100%);
+  color: #e8edf7;
+  overflow: hidden;
+}
+
+.lia-boot-splash__core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: auto;
+  height: auto;
+  transform: translate(-50%, -50%);
+}
+
+.lia-boot-splash__logo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28em;
+  line-height: 1;
+  text-align: center;
+  font-size: clamp(4.4rem, 20vw, 6.2rem);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 html[data-theme="dark"] .lia-wordmark {
   background:
     linear-gradient(90deg, var(--neon-cyan-soft), var(--neon-cyan-soft)),
@@ -784,6 +823,21 @@ html[data-theme="dark"] .lia-wordmark {
       #eaffff 50%,
       rgba(234, 255, 255, 0) 56%
     );
+  background-size: 100% 100%, 120px 100%;
+  background-position: 0% 50%, -90px 50%;
+  background-repeat: no-repeat, no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: lia-think-sweep-31 10s linear infinite;
+  will-change: background-position;
+}
+
+.lia-boot-splash .lia-wordmark {
+  background:
+    linear-gradient(90deg, rgba(126, 255, 235, 0.62), rgba(126, 255, 235, 0.62)),
+    linear-gradient(90deg, rgba(234, 255, 255, 0) 44%, #eaffff 50%, rgba(234, 255, 255, 0) 56%);
   background-size: 100% 100%, 120px 100%;
   background-position: 0% 50%, -90px 50%;
   background-repeat: no-repeat, no-repeat;

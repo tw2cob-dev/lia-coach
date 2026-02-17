@@ -3,11 +3,14 @@ export function isSuperAdminEmail(email?: string | null): boolean {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return false;
 
-  const rawList = process.env.SUPER_ADMIN_EMAILS ?? "";
-  if (!rawList.trim()) return false;
+  const sources = [
+    process.env.SUPER_ADMIN_EMAILS ?? "",
+    process.env.SUPER_ADMIN_EMAIL ?? "",
+  ].filter((value) => value.trim().length > 0);
+  if (sources.length === 0) return false;
 
-  const allowed = rawList
-    .split(",")
+  const allowed = sources
+    .flatMap((value) => value.split(/[,\n;]+/))
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
 
