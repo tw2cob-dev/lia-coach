@@ -36,8 +36,18 @@ function splitAdminSource(raw: string): string[] {
 }
 
 function normalizeEmailToken(raw: string): string {
-  return raw
+  const cleaned = raw
     .trim()
     .replace(/^['"`]+|['"`]+$/g, "")
     .toLowerCase();
+  if (!cleaned || !cleaned.includes("@")) return cleaned;
+
+  const [localRaw, domainRaw] = cleaned.split("@");
+  const domain = domainRaw === "googlemail.com" ? "gmail.com" : domainRaw;
+  if (domain !== "gmail.com") return `${localRaw}@${domain}`;
+
+  const plusIndex = localRaw.indexOf("+");
+  const localNoAlias = plusIndex >= 0 ? localRaw.slice(0, plusIndex) : localRaw;
+  const localCanonical = localNoAlias.replace(/\./g, "");
+  return `${localCanonical}@${domain}`;
 }
