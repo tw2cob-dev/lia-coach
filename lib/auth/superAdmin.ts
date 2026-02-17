@@ -32,7 +32,7 @@ function splitAdminSource(raw: string): string[] {
     }
   }
 
-  return trimmed.split(/[,\n;]+/);
+  return trimmed.split(/[,\n;\s]+/);
 }
 
 function normalizeEmailToken(raw: string): string {
@@ -40,14 +40,20 @@ function normalizeEmailToken(raw: string): string {
     .trim()
     .replace(/^['"`]+|['"`]+$/g, "")
     .toLowerCase();
-  if (!cleaned || !cleaned.includes("@")) return cleaned;
+  if (!cleaned) return "";
 
-  const [localRaw, domainRaw] = cleaned.split("@");
+  const angleMatch = cleaned.match(/<([^>]+)>/);
+  const candidate = angleMatch?.[1]?.trim() || cleaned.replace(/[<>]/g, "").trim();
+  if (!candidate.includes("@")) return candidate;
+
+  const [localPartRaw, domainRaw] = candidate.split("@");
+  const localRaw = localPartRaw ?? "";
+  if (!localRaw || !domainRaw) return candidate;
   const domain = domainRaw === "googlemail.com" ? "gmail.com" : domainRaw;
-  if (domain !== "gmail.com") return `${localRaw}@${domain}`;
-
   const plusIndex = localRaw.indexOf("+");
   const localNoAlias = plusIndex >= 0 ? localRaw.slice(0, plusIndex) : localRaw;
+  if (domain !== "gmail.com") return `${localNoAlias}@${domain}`;
+
   const localCanonical = localNoAlias.replace(/\./g, "");
   return `${localCanonical}@${domain}`;
 }
