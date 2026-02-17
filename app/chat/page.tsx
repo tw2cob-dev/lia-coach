@@ -2103,9 +2103,6 @@ export default function ChatPage() {
                   </button>
                 </div>
               </div>
-              <p className="mt-1 whitespace-pre-wrap">
-                {`auth email=${authUser?.email ?? "-"} superadmin=${authUser?.isSuperAdmin ? "1" : "0"}`}
-              </p>
               {authUser?.isSuperAdmin && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
