@@ -225,7 +225,7 @@ export default function ChatPage() {
   const bootSplashStartRef = useRef(Date.now());
   const initialBottomLockDoneRef = useRef(false);
   const autoScrollEnabledRef = useRef(true);
-  const userIsInteractingRef = useRef(false);
+  const userScrollIntentRef = useRef(false);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -678,6 +678,10 @@ export default function ChatPage() {
   const handleScroll = () => {
     const container = scrollRef.current;
     if (!container) return;
+    if (isComposerFocused) {
+      setAutoScrollEnabled(true);
+      return;
+    }
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     const nearBottom = distanceFromBottom <= SCROLL_THRESHOLD_PX;
@@ -685,9 +689,9 @@ export default function ChatPage() {
       setAutoScrollEnabled(true);
       return;
     }
-    if (userIsInteractingRef.current) {
-      setAutoScrollEnabled(false);
-    }
+    // WhatsApp-like behavior: only unpin if the user intentionally scrolls up.
+    if (!userScrollIntentRef.current) return;
+    setAutoScrollEnabled(false);
   };
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -696,6 +700,13 @@ export default function ChatPage() {
     const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
     container.scrollTo({ top: maxTop, behavior });
     container.scrollTop = maxTop;
+    endRef.current?.scrollIntoView({ block: "end", inline: "nearest", behavior });
+  }, []);
+
+  const getDistanceFromBottom = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return 0;
+    return container.scrollHeight - container.scrollTop - container.clientHeight;
   }, []);
 
   const scheduleScrollToBottom = useCallback(() => {
@@ -718,6 +729,7 @@ export default function ChatPage() {
     if (!hasHydrated) return;
     if (showBootSplash) return;
     if (!scrollRef.current) return;
+    if (events.length === 0 && !isStreaming) return;
 
     initialBottomLockDoneRef.current = true;
     setAutoScrollEnabled(true);
@@ -733,10 +745,10 @@ export default function ChatPage() {
       window.cancelAnimationFrame(rafId);
       window.clearTimeout(timeoutId);
     };
-  }, [hasHydrated, showBootSplash, scheduleScrollToBottom]);
+  }, [hasHydrated, showBootSplash, events.length, isStreaming, scheduleScrollToBottom]);
 
   useEffect(() => {
-    if (!autoScrollEnabled) return;
+    if (!autoScrollEnabled && !isComposerFocused) return;
 
     const timeoutIds = new Set<number>();
     const settleScrollToBottom = () => {
@@ -771,16 +783,44 @@ export default function ChatPage() {
       vv?.removeEventListener("resize", onViewportChange);
       vv?.removeEventListener("scroll", onViewportChange);
     };
-  }, [autoScrollEnabled, scheduleScrollToBottom]);
+  }, [autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
 
   useEffect(() => {
-    if (!autoScrollEnabled) return;
+    if (!autoScrollEnabled && !isComposerFocused) return;
     scheduleScrollToBottom();
     const timeoutId = window.setTimeout(() => {
       scheduleScrollToBottom();
     }, 120);
     return () => window.clearTimeout(timeoutId);
-  }, [composerReservePx, autoScrollEnabled, scheduleScrollToBottom]);
+  }, [composerReservePx, autoScrollEnabled, isComposerFocused, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled && !isComposerFocused) return;
+
+    const ensurePinned = () => {
+      const distance = getDistanceFromBottom();
+      if (distance > 6 || distance < -48) {
+        scheduleScrollToBottom();
+      }
+    };
+
+    ensurePinned();
+    const intervalId = window.setInterval(ensurePinned, 320);
+    const onViewportChange = () => ensurePinned();
+    const vv = window.visualViewport;
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("orientationchange", onViewportChange);
+    vv?.addEventListener("resize", onViewportChange);
+    vv?.addEventListener("scroll", onViewportChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("orientationchange", onViewportChange);
+      vv?.removeEventListener("resize", onViewportChange);
+      vv?.removeEventListener("scroll", onViewportChange);
+    };
+  }, [autoScrollEnabled, isComposerFocused, getDistanceFromBottom, scheduleScrollToBottom]);
 
   const adjustTextareaHeight = () => {
     const el = inputRef.current;
@@ -2131,23 +2171,23 @@ export default function ChatPage() {
             ref={scrollRef}
             onScroll={handleScroll}
             onTouchStart={() => {
-              userIsInteractingRef.current = true;
+              userScrollIntentRef.current = true;
             }}
             onTouchMove={() => {
-              userIsInteractingRef.current = true;
+              userScrollIntentRef.current = true;
             }}
             onTouchEnd={() => {
               window.setTimeout(() => {
-                userIsInteractingRef.current = false;
+                userScrollIntentRef.current = false;
               }, 120);
             }}
             onTouchCancel={() => {
-              userIsInteractingRef.current = false;
+              userScrollIntentRef.current = false;
             }}
             onWheel={() => {
-              userIsInteractingRef.current = true;
+              userScrollIntentRef.current = true;
               window.setTimeout(() => {
-                userIsInteractingRef.current = false;
+                userScrollIntentRef.current = false;
               }, 120);
             }}
             className="chat-scroll mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
@@ -2410,9 +2450,16 @@ export default function ChatPage() {
                   onChange={(event) => setInput(event.target.value)}
                   onFocus={() => {
                     setIsComposerFocused(true);
+                    setAutoScrollEnabled(true);
+                    scheduleScrollToBottom();
+                    window.setTimeout(() => {
+                      scheduleScrollToBottom();
+                    }, 120);
                   }}
                   onBlur={() => {
                     setIsComposerFocused(false);
+                    setAutoScrollEnabled(true);
+                    scheduleScrollToBottom();
                   }}
                   onKeyDown={handleKeyDown}
                   placeholder="Escribe aquí..."
